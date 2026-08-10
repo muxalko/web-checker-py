@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reservations for {{ reservation_date.isoformat() }}</title>
+  </head>
+  <body>
+    <main>
+      <h1>Mock Adventure Park</h1>
+      <h2>Reservations for {{ reservation_date.strftime("%B %d, %Y") }}</h2>
+      <section aria-label="Reservation opportunities">
+        {% for opportunity in opportunities %}
+        <article data-opportunity-id="{{ opportunity.id }}">
+          <h3 class="title">{{ opportunity.title }}</h3>
+          <time datetime="{{ opportunity.starts_at }}">{{ opportunity.time }}</time>
+          <p
+            class="status"
+            data-status="{{ opportunity.availability }}"
+            data-capacity="{{ opportunity.capacity }}"
+          >
+            {% if opportunity.availability == "available" %}
+              {{ opportunity.capacity }} space{% if opportunity.capacity != 1 %}s{% endif %} available
+            {% elif opportunity.availability == "sold-out" %}
+              Sold out
+            {% else %}
+              Availability unknown
+            {% endif %}
+          </p>
+          {% if opportunity.availability == "available" %}
+          <a class="book" href="/book/{{ opportunity.id }}">Reserve</a>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </section>
+    </main>
+  </body>
+</html>
