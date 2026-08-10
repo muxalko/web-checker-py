@@ -65,6 +65,11 @@ db.sqlite3-journal
 instance/
 .webassets-cache
 
+# Local checker state
+*.db
+*.db-shm
+*.db-wal
+
 # Scrapy stuff:
 .scrapy
 
