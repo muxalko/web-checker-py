@@ -775,7 +775,9 @@ deletion. Changes must arrive through pull requests authored by a contributor or
 the repository-scoped `muxalko-web-checker-codex` GitHub App. Merging requires a
 passing `Python quality gates` check, resolved review conversations, and a fresh
 code-owner approval from `@muxalko`; new reviewable commits dismiss an earlier
-approval. Repository administrators do not bypass these requirements.
+approval. Automation commits are authored and pushed with the App installation
+identity so the human owner remains an independent reviewer. Repository
+administrators do not bypass these requirements.
 
 ## Open decisions
 
