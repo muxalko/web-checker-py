@@ -1,5 +1,7 @@
 # web-checker-py
 
+[![CI](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml)
+
 An extensible scheduled checker that detects registration and reservation
 opportunities and sends notifications when availability changes.
 
@@ -29,6 +31,9 @@ Run the default verification suite with:
 .venv/bin/pytest
 docker compose config
 ```
+
+The same formatting, linting, test, and Compose validation gates run in GitHub
+Actions for every pull request into `development` and every push to that branch.
 
 ## Scheduled operation
 

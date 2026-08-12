@@ -567,9 +567,10 @@ Each implementation stage has explicit minimum coverage:
 8. **Complete workflow:** an end-to-end unavailable-to-available scenario
    against the mock site producing exactly one notification.
 
-The default verification command should eventually run formatting/linting,
-static checks, unit tests, and integration tests. Container and end-to-end tests
-may be a separate documented command if they materially increase execution time.
+The default local and GitHub Actions verification gates run formatting, linting,
+unit and integration tests, and Docker Compose configuration validation.
+Container builds and end-to-end tests remain separate documented commands
+because they materially increase execution time.
 
 ## Delivery plan
 
@@ -581,7 +582,8 @@ may be a separate documented command if they materially increase execution time.
   will be added with notifications.**
 - Add configuration loading and validation. **Implemented for one-shot jobs and
   generic HTML driver rules.**
-- Add basic CI checks.
+- Add basic CI checks. **Implemented with GitHub Actions on pull requests into
+  `development` and pushes to that branch.**
 - Add tests for every foundation component as it is introduced. **Implemented
   for the current domain and registry components.**
 
@@ -750,6 +752,32 @@ and permits unrelated jobs to execute concurrently. Missed occurrences caused
 by a still-running job are skipped. Cross-driver retries are bounded and apply
 capped exponential backoff with jitter. Signal-driven shutdown waits up to 30
 seconds before cancelling unfinished work.
+
+### D-015: Enforce pull-request quality gates with GitHub Actions
+
+**Status:** Accepted
+
+GitHub Actions runs the supported Python 3.11 environment for every pull request
+into `development` and every push to that branch. One required quality job checks
+Ruff formatting and linting, executes the complete offline pytest suite, and
+validates the Docker Compose configuration. The workflow has read-only repository
+permissions, cancels superseded runs for the same ref, and pins external Actions
+to immutable release commit SHAs. Container builds and live Compose acceptance
+tests remain explicit gates because they are slower and are not required on every
+prototype commit.
+
+### D-016: Require owner-approved pull requests for development
+
+**Status:** Accepted
+
+The `development` branch is protected against direct pushes, force pushes, and
+deletion. Changes must arrive through pull requests authored by a contributor or
+the repository-scoped `muxalko-web-checker-codex` GitHub App. Merging requires a
+passing `Python quality gates` check, resolved review conversations, and a fresh
+code-owner approval from `@muxalko`; new reviewable commits dismiss an earlier
+approval. Automation commits are authored and pushed with the App installation
+identity so the human owner remains an independent reviewer. Repository
+administrators do not bypass these requirements.
 
 ## Open decisions
 
