@@ -13,6 +13,25 @@ See [DESIGN.md](DESIGN.md) for the product scope, architecture, engineering
 decisions, testing strategy, and delivery plan. It is the canonical record of
 the project's technical design and should be updated as decisions change.
 
+## Contribution workflow
+
+Every repository change follows the same auditable sequence:
+
+1. Open a GitHub issue describing the desired outcome, scope, and acceptance
+   criteria.
+2. From current `development`, create a branch named
+   `type/<issue-number>-description`, such as `agent/123-add-provider`.
+3. Implement and verify the change on that branch.
+4. Open a pull request targeting `development` whose body contains
+   `Closes #<issue-number>` for the same open issue.
+5. Merge only after the `Change governance` and `Python quality gates` checks
+   pass and the code owner approves the latest revision.
+
+The governance check rejects a mismatched branch or closing reference, a closed
+issue, a pull request number used in place of an issue, or a base branch other
+than `development`. The issue is closed automatically when its linked pull
+request merges.
+
 ## Development
 
 The supported runtime is Python 3.11 or newer. Create a virtual environment and
@@ -21,19 +40,29 @@ install the project with its development tools:
 ```console
 python3.11 -m venv .venv
 .venv/bin/python -m pip install --editable '.[dev]'
+.venv/bin/pre-commit install
 ```
+
+The installed Git hook uses Gitleaks to scan both staged changes and the full
+reachable history of the current branch. Findings are redacted so detected
+secret values are not echoed to the terminal.
 
 Run the default verification suite with:
 
 ```console
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
+.venv/bin/pre-commit run --all-files
 .venv/bin/pytest
 docker compose config
 ```
 
-The same formatting, linting, test, and Compose validation gates run in GitHub
-Actions for every pull request into `development` and every push to that branch.
+The same secret scan, formatting, linting, test, and Compose validation gates run
+in GitHub Actions for every pull request into `development` and every push to
+that branch. Gitleaks uses its default rules through [`.gitleaks.toml`](.gitleaks.toml);
+do not add broad allowlists or bypass the hook for real credentials. Revoke and
+rotate any credential that is ever committed, even if the commit is later
+removed.
 
 ## Scheduled operation
 

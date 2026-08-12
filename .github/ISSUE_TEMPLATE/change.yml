@@ -1,0 +1,25 @@
+name: Change request
+description: Propose a code, documentation, tooling, or configuration change.
+title: ""
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result this change should achieve.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Identify the behavior and files expected to change.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that will show the work is complete.
+    validations:
+      required: true

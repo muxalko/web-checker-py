@@ -567,10 +567,10 @@ Each implementation stage has explicit minimum coverage:
 8. **Complete workflow:** an end-to-end unavailable-to-available scenario
    against the mock site producing exactly one notification.
 
-The default local and GitHub Actions verification gates run formatting, linting,
-unit and integration tests, and Docker Compose configuration validation.
-Container builds and end-to-end tests remain separate documented commands
-because they materially increase execution time.
+The default local and GitHub Actions verification gates run secret scanning,
+formatting, linting, unit and integration tests, and Docker Compose configuration
+validation. Container builds and end-to-end tests remain separate documented
+commands because they materially increase execution time.
 
 ## Delivery plan
 
@@ -759,12 +759,12 @@ seconds before cancelling unfinished work.
 
 GitHub Actions runs the supported Python 3.11 environment for every pull request
 into `development` and every push to that branch. One required quality job checks
-Ruff formatting and linting, executes the complete offline pytest suite, and
-validates the Docker Compose configuration. The workflow has read-only repository
-permissions, cancels superseded runs for the same ref, and pins external Actions
-to immutable release commit SHAs. Container builds and live Compose acceptance
-tests remain explicit gates because they are slower and are not required on every
-prototype commit.
+for committed secrets, verifies Ruff formatting and linting, executes the
+complete offline pytest suite, and validates the Docker Compose configuration.
+The workflow has read-only repository permissions, cancels superseded runs for
+the same ref, and pins external Actions to immutable release commit SHAs.
+Container builds and live Compose acceptance tests remain explicit gates because
+they are slower and are not required on every prototype commit.
 
 ### D-016: Require owner-approved pull requests for development
 
@@ -774,10 +774,45 @@ The `development` branch is protected against direct pushes, force pushes, and
 deletion. Changes must arrive through pull requests authored by a contributor or
 the repository-scoped `muxalko-web-checker-codex` GitHub App. Merging requires a
 passing `Python quality gates` check, resolved review conversations, and a fresh
-code-owner approval from `@muxalko`; new reviewable commits dismiss an earlier
-approval. Automation commits are authored and pushed with the App installation
-identity so the human owner remains an independent reviewer. Repository
-administrators do not bypass these requirements.
+code-owner approval from `@muxalko`; the `Change governance` check also enforces
+issue-first traceability. New reviewable commits dismiss an earlier approval.
+Automation commits are authored and pushed with the App installation identity so
+the human owner remains an independent reviewer. Repository administrators do
+not bypass these requirements.
+
+### D-017: Scan staged changes and repository history for secrets
+
+**Status:** Accepted
+
+Pre-commit runs an immutable Gitleaks release before every local commit. One hook
+scans the staged diff to block newly introduced credentials, tokens, keys, and
+other detected secrets; a second hook scans the complete reachable history of
+the current branch so existing committed findings also fail verification.
+GitHub Actions uses a full-depth checkout and runs the same hooks. Findings are
+redacted, the default Gitleaks rules remain enabled through the checked-in
+configuration, and exceptions require narrow review rather than broad path or
+rule exclusions. Secret scanning reduces risk but does not prove that a tree is
+free of every possible secret; exposed credentials must still be revoked and
+rotated.
+
+### D-018: Require issue-first, branch-based pull-request delivery
+
+**Status:** Accepted
+
+Every code, documentation, tooling, or configuration change begins with an open
+GitHub issue that defines its outcome and acceptance criteria. A working branch
+is then created from current `development` and named
+`type/<issue-number>-description`. The pull request targets `development` and
+uses a supported GitHub closing keyword for the same issue number so the issue
+closes only when the change merges.
+
+A read-only GitHub Actions job validates the base branch, branch name, closing
+reference, issue type, and open state through the GitHub API. Its unique
+`Change governance` status is required by branch protection alongside the
+quality gates and owner approval. Read-only investigation does not require an
+issue because it does not change repository state. GitHub cannot guarantee that
+an issue remains open after a successful check without another event, so owner
+review also confirms it is still open immediately before merge.
 
 ## Open decisions
 

@@ -1,0 +1,4 @@
+title = "web-checker-py secret scanning"
+
+[extend]
+useDefault = true
