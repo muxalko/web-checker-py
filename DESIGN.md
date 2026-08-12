@@ -766,6 +766,17 @@ to immutable release commit SHAs. Container builds and live Compose acceptance
 tests remain explicit gates because they are slower and are not required on every
 prototype commit.
 
+### D-016: Require owner-approved pull requests for development
+
+**Status:** Accepted
+
+The `development` branch is protected against direct pushes, force pushes, and
+deletion. Changes must arrive through pull requests authored by a contributor or
+the repository-scoped `muxalko-web-checker-codex` GitHub App. Merging requires a
+passing `Python quality gates` check, resolved review conversations, and a fresh
+code-owner approval from `@muxalko`; new reviewable commits dismiss an earlier
+approval. Repository administrators do not bypass these requirements.
+
 ## Open decisions
 
 These should be resolved with implementation evidence rather than assumed now:
