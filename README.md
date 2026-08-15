@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/logo.png" alt="Web Checker — Get that spot …" width="900">
+</p>
+
 # web-checker-py
 
 [![CI](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml)
