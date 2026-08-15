@@ -26,10 +26,11 @@ Examples include:
 - A campsite, appointment, ticket, or other limited opportunity becomes
   available.
 
-The first prototype will not poll a real third-party website. It will use a
-locally controlled mock reservation site and a generic HTML driver. This allows
-the complete system to be developed and tested deterministically without placing
-load on an external service.
+The initial prototype used a locally controlled reservation site and a generic
+HTML driver. The first external integration adds a BC Parks day-use driver backed
+by anonymous structured endpoints. Development and automated tests still use a
+production-shaped local mock, keeping provider traffic out of the default
+workflow while exercising the real contract boundaries.
 
 ## Goals
 
@@ -155,6 +156,7 @@ The initial registry is an explicit mapping of names to driver implementations:
 
 ```python
 DRIVERS = {
+    "bcparks_dayuse": BCParksDayUseDriver,
     "generic_html": GenericHtmlDriver,
 }
 ```
@@ -253,8 +255,12 @@ where available.
 ### Mock reservation site
 
 The mock site is a fake provider, not part of the checker core and not itself a
-driver. It presents a small reservation page containing stable opportunity IDs,
-times, availability states, capacity, and booking links.
+driver. It retains the generic HTML reservation page and also exposes a
+production-shaped BC Parks surface under `/bcparks`: anonymous config, park,
+facility, and reservation endpoints plus a human-readable selection page. The BC
+Parks mock contains the sanitized park, facility, slot, capacity, booking-day,
+and rolling-window shapes captured during provider research. Raw HAR captures
+are ignored and are not test fixtures.
 
 A development-only control API changes its state deterministically. It should
 support scenarios including:
@@ -265,7 +271,9 @@ support scenarios including:
 - Opportunity appearance and disappearance.
 - Server error.
 - Slow response.
-- Malformed or unexpectedly structured HTML.
+- Malformed or unexpectedly structured HTML or JSON.
+- Provider-local clock changes and pre-opening inventory.
+- Park and facility closures or visibility changes.
 
 Control endpoints must not be enabled in a production deployment.
 
@@ -315,6 +323,29 @@ config:
       selector: "a.book"
       attribute: href
 ```
+
+### BC Parks day-use driver
+
+The `bcparks_dayuse` driver uses the public anonymous config, park, facility, and
+reservation JSON endpoints. A job chooses a park ID, exact facility name, and
+one of the provider's `AM`, `PM`, or `DAY` slots. The `rolling_window` date
+strategy returns each dated opportunity in chronological order, allowing the
+normal transition engine to alert on the earliest newly available date without
+adding provider concepts to the core.
+
+The base URL is configurable. Development, CI, and default example configuration
+target the local mock; live access is an explicit operator action and never part
+of the default test suite. Requests are bounded anonymous `GET`s with a timeout,
+response-size limit, optional public `X-App-Version` header, and no cookies,
+credentials, form submission, authentication, or reservation behavior.
+
+Provider time is interpreted in `America/Vancouver`. Inventory is `unknown`
+until its booking opening time. After opening, `Full` with a zero maximum maps to
+`unavailable`, while the known positive `Low`, `Medium`, and `High` states map to
+`available`. Non-booking days also remain `unknown`. Empty or incomplete
+catalogs, missing dates or slots, unknown states, inconsistent capacity, and
+closed or hidden selections fail the check so the last good snapshot is not
+replaced by a false disappearance.
 
 ## Initial domain model
 
@@ -509,13 +540,15 @@ Tests should be placed at the narrowest useful level:
 
 Tests must not depend on live third-party websites. Provider integrations should
 use sanitized response fixtures, mocked transports, or the controlled mock site.
-Live checks, if introduced later, must be opt-in and excluded from the default
-test suite.
+Live checks are manual, opt-in, conservative, and excluded from the default test
+suite.
 
 ### Unit tests
 
 - Configuration validation.
 - Generic HTML extraction from saved fixtures.
+- BC Parks contract parsing and availability interpretation from sanitized
+  fixtures.
 - Normalized opportunity identity.
 - Transition detection.
 - Failed/incomplete check semantics.
@@ -525,6 +558,7 @@ test suite.
 ### Integration tests
 
 - Checker HTTP client against the mock site.
+- BC Parks driver against the production-shaped mock API.
 - SQLite persistence across check executions.
 - Driver registry resolution.
 - Configuration-to-notification flow.
@@ -624,9 +658,13 @@ increase execution time.
 
 ### Milestone 5: first external provider
 
-- Research candidate providers and their policies.
-- Prefer an official API or structured endpoint where permitted.
-- Implement a provider-specific driver using fixtures first.
+- Research candidate providers and their policies. **BC Parks day-use endpoint
+  behavior and public catalog shapes have been captured and sanitized.**
+- Prefer an official API or structured endpoint where permitted. **Implemented
+  using the anonymous structured endpoints used by the public day-use site.**
+- Implement a provider-specific driver using fixtures first. **Implemented with
+  strict fixture parsers, a production-shaped local mock, and offline driver
+  integration tests.**
 - Add a real notification channel.
 
 ## Recorded decisions
@@ -840,6 +878,29 @@ every queued merge is serialized. Re-delivery of the currently healthy SHA is
 idempotent. Compose health gating makes startup failures visible, retains the
 previous image locally, and automatically reapplies it after a failed update.
 Production data is never removed during deployment or rollback.
+
+### D-020: Use anonymous structured BC Parks endpoints behind a local mock
+
+**Status:** Accepted
+
+The first external provider uses BC Parks day-use anonymous config, park,
+facility, and reservation endpoints instead of automating the site's browser UI.
+The driver performs only bounded `GET` requests and keeps all protocol parsing,
+provider time, slot, capacity, and booking-window rules behind the driver
+contract. It does not authenticate, reserve, cancel, purchase, or send personal
+information.
+
+A configurable base URL and production-shaped local mock make fixture and mock
+testing the default. The mock covers the captured park/facility catalog and
+deterministic availability, clock, closure, empty, malformed, slow, and error
+scenarios. Raw traffic captures are not committed. Live validation is a manual,
+explicit operator action; routine development and CI never contact the provider.
+
+Pre-opening inventory and non-booking days normalize to `unknown`. Known positive
+inventory becomes `available` only after opening, and `Full` with zero capacity
+becomes `unavailable`. Unexpectedly empty, incomplete, or structurally changed
+responses fail the check, preserving the last known-good snapshot rather than
+reporting false disappearances.
 
 ## Open decisions
 

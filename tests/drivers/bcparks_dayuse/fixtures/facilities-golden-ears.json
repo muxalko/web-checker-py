@@ -1,0 +1,90 @@
+[
+  {
+    "pk": "facility::0008",
+    "sk": "Alouette Lake Boat Launch Parking",
+    "name": "Alouette Lake Boat Launch Parking",
+    "type": "Parking",
+    "visible": true,
+    "status": {"state": "open", "stateReason": null},
+    "bookingDaysAhead": 2,
+    "bookingOpeningHour": 7,
+    "bookingDays": {
+      "1": true,
+      "2": false,
+      "3": false,
+      "4": false,
+      "5": true,
+      "6": true,
+      "7": true
+    },
+    "bookingTimes": {"DAY": {"max": 100}},
+    "bookableHolidays": {},
+    "currentTime": "2026-08-15T11:02:02.458Z"
+  },
+  {
+    "pk": "facility::0008",
+    "sk": "Alouette Lake South Beach Day-Use Parking Lot",
+    "name": "Alouette Lake South Beach Day-Use Parking Lot",
+    "type": "Parking",
+    "visible": true,
+    "status": {"state": "open", "stateReason": null},
+    "bookingDaysAhead": 2,
+    "bookingOpeningHour": 7,
+    "bookingDays": {
+      "1": true,
+      "2": false,
+      "3": false,
+      "4": false,
+      "5": true,
+      "6": true,
+      "7": true
+    },
+    "bookingTimes": {"AM": {"max": 790}, "PM": {"max": 420}},
+    "bookableHolidays": {},
+    "currentTime": "2026-08-15T11:02:02.458Z"
+  },
+  {
+    "pk": "facility::0008",
+    "sk": "Gold Creek Parking Lot",
+    "name": "Gold Creek Parking Lot",
+    "type": "Parking",
+    "visible": true,
+    "status": {"state": "open", "stateReason": null},
+    "bookingDaysAhead": 2,
+    "bookingOpeningHour": 7,
+    "bookingDays": {
+      "1": true,
+      "2": false,
+      "3": false,
+      "4": false,
+      "5": true,
+      "6": true,
+      "7": true
+    },
+    "bookingTimes": {"AM": {"max": 110}, "PM": {"max": 60}},
+    "bookableHolidays": {},
+    "currentTime": "2026-08-15T11:02:02.458Z"
+  },
+  {
+    "pk": "facility::0008",
+    "sk": "West Canyon Trailhead Parking Lot",
+    "name": "West Canyon Trailhead Parking Lot",
+    "type": "Parking",
+    "visible": true,
+    "status": {"state": "open", "stateReason": null},
+    "bookingDaysAhead": 2,
+    "bookingOpeningHour": 7,
+    "bookingDays": {
+      "1": true,
+      "2": false,
+      "3": false,
+      "4": false,
+      "5": true,
+      "6": true,
+      "7": true
+    },
+    "bookingTimes": {"AM": {"max": 55}, "PM": {"max": 30}},
+    "bookableHolidays": {},
+    "currentTime": "2026-08-15T11:02:02.458Z"
+  }
+]

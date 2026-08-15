@@ -9,6 +9,8 @@ from datetime import datetime
 
 from flask import Flask, abort, jsonify, render_template, request
 
+from mock_site.bcparks import register_bcparks_mock
+
 DEFAULT_OPPORTUNITIES = (
     {
         "key": "morning-pass",
@@ -121,6 +123,11 @@ def create_app(config=None):
 
     state = MockReservationState()
     app.extensions["mock_reservation_state"] = state
+    register_bcparks_mock(
+        app,
+        require_controls=_require_controls,
+        json_object=_json_object,
+    )
 
     @app.get("/")
     def index():

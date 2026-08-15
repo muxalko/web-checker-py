@@ -1,0 +1,14 @@
+{
+  "2026-08-15": {
+    "AM": {"capacity": "Full", "max": 0},
+    "PM": {"capacity": "Full", "max": 0}
+  },
+  "2026-08-16": {
+    "AM": {"capacity": "Full", "max": 0},
+    "PM": {"capacity": "Full", "max": 0}
+  },
+  "2026-08-17": {
+    "AM": {"capacity": "High", "max": 1},
+    "PM": {"capacity": "High", "max": 1}
+  }
+}

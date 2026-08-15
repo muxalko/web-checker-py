@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mock BC Parks Day-Use Pass</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; color: #1f2933; background: #f4f7f8; }
+      header { padding: 1.25rem 2rem; color: white; background: #174f78; }
+      main { max-width: 70rem; margin: 2rem auto; padding: 0 1rem; }
+      section { margin: 1rem 0; padding: 1rem; border-radius: .5rem; background: white; }
+      a, button { color: #174f78; }
+      .choices { display: flex; flex-wrap: wrap; gap: .5rem; }
+      .choice { padding: .6rem .8rem; border: 1px solid #8aa7b8; border-radius: .35rem; text-decoration: none; }
+      .closed { color: #7b341e; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: .6rem; border-bottom: 1px solid #d8e2e8; text-align: left; }
+      .notice { padding: .75rem; border-left: .3rem solid #e3a008; background: #fff8db; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Mock BC Parks</strong>
+      <div>Day-use pass development provider</div>
+    </header>
+    <main>
+      <p class="notice">This local site never makes a reservation or collects personal information.</p>
+      <section>
+        <h1>Select a park</h1>
+        <div class="choices">
+          {% for park in parks %}
+          <a class="choice{% if park.status != 'open' %} closed{% endif %}" href="?park={{ park.sk }}">
+            {{ park.name }} — {{ park.status }}
+          </a>
+          {% endfor %}
+        </div>
+      </section>
+      {% if selected_park %}
+      <section>
+        <h2>Select a facility</h2>
+        {% if facilities %}
+        <div class="choices">
+          {% for facility in facilities %}
+          <a class="choice" href="?park={{ selected_park }}&amp;facility={{ facility.name | urlencode }}">
+            {{ facility.name }} — {{ facility.bookingTimes.keys() | join('/') }}
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}<p>No active facilities.</p>{% endif %}
+      </section>
+      {% endif %}
+      {% if reservations %}
+      <section>
+        <h2>{{ selected_facility }}</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Slot</th><th>Capacity</th><th>Maximum</th></tr></thead>
+          <tbody>
+            {% for date, slots in reservations.items() %}
+              {% for slot, availability in slots.items() %}
+              <tr><td>{{ date }}</td><td>{{ slot }}</td><td>{{ availability.capacity }}</td><td>{{ availability.max }}</td></tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endif %}
+    </main>
+  </body>
+</html>

@@ -9,9 +9,10 @@
 An extensible scheduled checker that detects registration and reservation
 opportunities and sends notifications when availability changes.
 
-The prototype is provider-independent, with interchangeable drivers. It is
-developed against a controlled mock reservation site and a generic HTML driver
-before integrating real providers.
+The checker core is provider-independent, with interchangeable drivers. The
+default development stack uses a controlled, production-shaped BC Parks mock;
+the BC Parks driver can be pointed at the real public read-only API only through
+explicit operator configuration.
 
 See [DESIGN.md](DESIGN.md) for the product scope, architecture, engineering
 decisions, testing strategy, and delivery plan. It is the canonical record of
@@ -59,6 +60,10 @@ Run the default verification suite with:
 .venv/bin/pre-commit run --all-files
 .venv/bin/pytest
 docker compose config
+WEB_CHECKER_IMAGE=web-checker-production:validation \
+  WEB_CHECKER_PRODUCTION_CONFIG_PATH=/dev/null \
+  WEB_CHECKER_PRODUCTION_ENV_PATH=/dev/null \
+  docker compose --file compose.production.yaml config --quiet
 ```
 
 The same secret scan, formatting, linting, test, and Compose validation gates run
@@ -70,11 +75,12 @@ removed.
 
 ## Scheduled operation
 
-[`jobs.example.yaml`](jobs.example.yaml) defines a generic HTML job for the mock
-reservation site. It runs immediately when the worker starts and every 60
-seconds afterward. The default Compose file is exclusively the development test
-stack. It builds the current working tree, including uncommitted changes, under
-the fixed project name `web-checker-development`:
+[`jobs.example.yaml`](jobs.example.yaml) defines a Golden Ears South Beach AM
+job using the production-shaped BC Parks mock. It runs immediately when the
+worker starts and every five minutes afterward. The default Compose file is
+exclusively the development test stack. It builds the current working tree,
+including uncommitted changes, under the fixed project name
+`web-checker-development`:
 
 ```console
 docker compose up --build
@@ -93,7 +99,7 @@ and jitter:
 
 ```yaml
 schedule:
-  interval_seconds: 60
+  interval_seconds: 300
   retry:
     max_attempts: 3
     initial_delay_seconds: 5
@@ -219,7 +225,7 @@ Run the job once with:
 ```console
 docker compose run --rm checker \
   web-checker --config jobs.example.yaml \
-  --database /data/web-checker.db check mock-adventure-passes
+  --database /data/web-checker.db check golden-ears-south-beach-am
 ```
 
 Compose starts the mock-site dependency automatically. The command prints each
@@ -232,22 +238,80 @@ available. Notification intents are persisted with the transition, successful
 deliveries are deduplicated, and failed deliveries remain pending for retry on a
 later check.
 
-Inspired by
+## BC Parks day-use driver
 
-- https://www.geeksforgeeks.org/python-script-to-monitor-website-changes/
-- https://docs.docker.com/language/python/containerize/
+The `bcparks_dayuse` driver reads only the anonymous public configuration, park,
+facility, and reservation endpoints. It never submits a reservation, starts a
+checkout, authenticates, handles CAPTCHA, cancels a pass, or sends personal
+information. A job selects one park, facility, and slot while the driver exposes
+the provider's rolling booking window as dated opportunities in chronological
+order.
+
+```yaml
+driver: bcparks_dayuse
+config:
+  base_url: http://mock-site:8080/bcparks
+  park_id: "0008"
+  facility: Alouette Lake South Beach Day-Use Parking Lot
+  slot: AM
+  date_strategy: rolling_window
+```
+
+BC Parks time is interpreted in `America/Vancouver`. Inventory returned before
+the facility's opening hour is recorded as `unknown`, not available. `Full`
+with a zero maximum is unavailable; the known `Low`, `Medium`, and `High`
+states with a positive maximum are available after opening. Empty responses,
+unknown capacity labels, inconsistent limits, missing dates or slots, and closed
+or hidden parks and facilities fail the check without replacing the last good
+snapshot.
+
+The base URL is deliberately configurable so all development and automated
+tests use the local mock. A manual live validation requires a separate operator
+configuration with `base_url: https://reserve.bcparks.ca`; it must be run
+explicitly, conservatively, and never as part of the default test suite. The
+optional `app_version` field sends the public frontend's `X-App-Version` value
+when the provider requires it.
 
 ## Mock reservation site
 
-The first development provider is a controlled local reservation website. Start
-it with:
+The development provider reproduces the captured BC Parks API paths, identifiers,
+facility options, booking days, slots, configured capacities, rolling responses,
+and seasonal park status. It also retains the original generic HTML fixture for
+generic-driver regression tests. Start it with:
 
 ```console
 docker compose up --build mock-site
 ```
 
-Then open `http://localhost:8080/reservations/2026-08-22`. The Compose environment
-enables a development-only control API:
+Then open `http://localhost:8080/bcparks/dayuse/`. The simple selection UI is for
+inspection only and cannot make a reservation. The Compose environment enables
+development-only controls for deterministic scenarios:
+
+```console
+curl -X PATCH http://localhost:8080/__control/bcparks/reservations \
+  -H 'Content-Type: application/json' \
+  -d '{"park_id":"0008","facility":"Alouette Lake South Beach Day-Use Parking Lot","date":"2026-08-16","slot":"AM","capacity":"Low","max":1}'
+
+curl -X PATCH http://localhost:8080/__control/bcparks/clock \
+  -H 'Content-Type: application/json' \
+  -d '{"current_time":"2026-08-15T14:00:00Z"}'
+
+curl -X PATCH http://localhost:8080/__control/bcparks/behavior \
+  -H 'Content-Type: application/json' \
+  -d '{"status_code":503}'
+
+curl -X POST http://localhost:8080/__control/bcparks/reset
+```
+
+The BC Parks behavior control also accepts `delay_seconds`, `malformed`, and
+`empty`. Moving the mock clock to another provider-local date rolls the three-day
+reservation window with it. Park and facility controls can simulate closures or
+hidden entries.
+All control routes return HTTP 404 unless
+`MOCK_SITE_CONTROLS_ENABLED=true`.
+
+The original generic HTML scenario remains available at
+`http://localhost:8080/reservations/2026-08-22` with its existing controls:
 
 ```console
 curl -X PATCH http://localhost:8080/__control/opportunities/midday-pass \
@@ -262,7 +326,6 @@ curl -X POST http://localhost:8080/__control/reset
 ```
 
 Set an opportunity's `enabled` field to `false` to simulate its disappearance.
-The controls return HTTP 404 unless `MOCK_SITE_CONTROLS_ENABLED=true`.
 If port 8080 is already occupied, set another host port, for example
 `MOCK_SITE_PORT=18080 docker compose up mock-site`.
 
@@ -290,3 +353,8 @@ Production configuration, environment values, SQLite data, deployment state,
 and runner registration credentials remain on the VM and outside this
 repository. See [the production deployment runbook](docs/deployment.md) for the
 one-time runner setup, trust boundary, validation, recovery, and rollback steps.
+
+Inspired by
+
+- https://www.geeksforgeeks.org/python-script-to-monitor-website-changes/
+- https://docs.docker.com/language/python/containerize/

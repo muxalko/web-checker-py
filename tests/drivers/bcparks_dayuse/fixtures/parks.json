@@ -1,0 +1,30 @@
+[
+  {
+    "pk": "park",
+    "sk": "0007",
+    "name": "Garibaldi Provincial Park",
+    "status": "open",
+    "visible": true
+  },
+  {
+    "pk": "park",
+    "sk": "0008",
+    "name": "Golden Ears Provincial Park",
+    "status": "open",
+    "visible": true
+  },
+  {
+    "pk": "park",
+    "sk": "0015",
+    "name": "Mount Seymour Provincial Park",
+    "status": "closed",
+    "visible": true
+  },
+  {
+    "pk": "park",
+    "sk": "0363",
+    "name": "Joffre Lakes Provincial Park",
+    "status": "open",
+    "visible": true
+  }
+]

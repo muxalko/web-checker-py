@@ -1,0 +1,11 @@
+{
+  "debugMode": false,
+  "API_PUBLIC_PATH": "/api",
+  "PARKING_PASS_LIMIT": 1,
+  "ADVANCE_BOOKING_LIMIT": 3,
+  "ADVANCE_BOOKING_HOUR": 7,
+  "TRAIL_PASS_LIMIT": 4,
+  "ENVIRONMENT": "prod",
+  "API_LOCATION": "https://reserve.bcparks.ca",
+  "API_PATH": "/api"
+}
