@@ -199,5 +199,5 @@ def test_missing_configuration_is_reported():
     config = deepcopy(make_config())
     del config["facility"]
 
-    with pytest.raises(BCParksConfigurationError, match="missing.*facility"):
+    with pytest.raises(BCParksConfigurationError, match=r"missing.*facility"):
         BCParksDayUseDriver().validate_config(config)
