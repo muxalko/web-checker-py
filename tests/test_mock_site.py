@@ -139,8 +139,7 @@ class MockSiteTestCase(unittest.TestCase):
         south_beach = next(
             item
             for item in facilities
-            if item["name"]
-            == "Alouette Lake South Beach Day-Use Parking Lot"
+            if item["name"] == "Alouette Lake South Beach Day-Use Parking Lot"
         )
         self.assertEqual(
             south_beach["bookingTimes"], {"AM": {"max": 790}, "PM": {"max": 420}}

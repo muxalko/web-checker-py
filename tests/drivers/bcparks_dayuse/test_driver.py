@@ -109,8 +109,7 @@ def test_sends_only_anonymous_gets_and_optional_app_version(fixture_json):
         "/api/reservation",
     ]
     assert all(
-        request.headers["X-App-Version"] == "captured-version"
-        for request in observed
+        request.headers["X-App-Version"] == "captured-version" for request in observed
     )
     assert all("authorization" not in request.headers for request in observed)
     assert observed[-1].url.params["park"] == "0008"

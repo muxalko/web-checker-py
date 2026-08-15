@@ -89,12 +89,8 @@ def _facility(park_id, name, facility_type, booking_days, booking_times):
 DEFAULT_FACILITIES = {
     "0007": (
         _facility("0007", "Cheakamus", "Parking", ALL_DAYS, {"AM": 49, "PM": 39}),
-        _facility(
-            "0007", "Diamond Head", "Parking", FRIDAY_TO_MONDAY, {"DAY": 55}
-        ),
-        _facility(
-            "0007", "Rubble Creek", "Parking", FRIDAY_TO_MONDAY, {"DAY": 230}
-        ),
+        _facility("0007", "Diamond Head", "Parking", FRIDAY_TO_MONDAY, {"DAY": 55}),
+        _facility("0007", "Rubble Creek", "Parking", FRIDAY_TO_MONDAY, {"DAY": 230}),
     ),
     "0008": (
         _facility(
@@ -126,23 +122,15 @@ DEFAULT_FACILITIES = {
             {"AM": 55, "PM": 30},
         ),
     ),
-    "0363": (
-        _facility("0363", "Joffre Lakes", "Trail", ALL_DAYS, {"DAY": 570}),
-    ),
+    "0363": (_facility("0363", "Joffre Lakes", "Trail", ALL_DAYS, {"DAY": 570}),),
 }
 
 
 def _availability(slots, *, pass_limit):
     return {
-        "2026-08-15": {
-            slot: {"capacity": "Full", "max": 0} for slot in slots
-        },
-        "2026-08-16": {
-            slot: {"capacity": "Full", "max": 0} for slot in slots
-        },
-        "2026-08-17": {
-            slot: {"capacity": "High", "max": pass_limit} for slot in slots
-        },
+        "2026-08-15": {slot: {"capacity": "Full", "max": 0} for slot in slots},
+        "2026-08-16": {slot: {"capacity": "Full", "max": 0} for slot in slots},
+        "2026-08-17": {slot: {"capacity": "High", "max": pass_limit} for slot in slots},
     }
 
 
@@ -156,9 +144,7 @@ DEFAULT_RESERVATIONS = {
     ("0008", "Alouette Lake South Beach Day-Use Parking Lot"): _availability(
         ("AM", "PM"), pass_limit=1
     ),
-    ("0008", "Gold Creek Parking Lot"): _availability(
-        ("AM", "PM"), pass_limit=1
-    ),
+    ("0008", "Gold Creek Parking Lot"): _availability(("AM", "PM"), pass_limit=1),
     ("0008", "West Canyon Trailhead Parking Lot"): _availability(
         ("AM", "PM"), pass_limit=1
     ),
@@ -411,10 +397,7 @@ def register_bcparks_mock(app, *, require_controls, json_object):
             abort(400, description="Delay must be between 0 and 10 seconds")
         if "status_code" in body and (
             not isinstance(body["status_code"], int)
-            or (
-                body["status_code"] != 200
-                and not 400 <= body["status_code"] <= 599
-            )
+            or (body["status_code"] != 200 and not 400 <= body["status_code"] <= 599)
         ):
             abort(400, description="Status code must be 200 or between 400 and 599")
         for field in ("malformed", "empty"):

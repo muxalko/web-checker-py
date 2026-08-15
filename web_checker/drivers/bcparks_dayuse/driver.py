@@ -386,9 +386,7 @@ class BCParksDayUseDriver:
                 slot=config["slot"],
                 date_strategy=config.get("date_strategy", SUPPORTED_DATE_STRATEGY),
                 app_version=config.get("app_version"),
-                timeout_seconds=config.get(
-                    "timeout_seconds", DEFAULT_TIMEOUT_SECONDS
-                ),
+                timeout_seconds=config.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
                 max_response_bytes=config.get(
                     "max_response_bytes", DEFAULT_MAX_RESPONSE_BYTES
                 ),
