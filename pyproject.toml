@@ -20,6 +20,7 @@ web-checker = "web_checker.cli:main"
 
 [project.optional-dependencies]
 dev = [
+  "pre-commit>=4.6,<5",
   "pytest>=9.1,<10",
   "ruff>=0.15,<0.16",
 ]
@@ -30,6 +31,7 @@ include = ["mock_site*", "web_checker*"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 cache_dir = "/tmp/web-checker-pytest-cache"
+pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.ruff]
