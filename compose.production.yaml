@@ -1,0 +1,38 @@
+name: web-checker-production
+
+services:
+  checker:
+    image: ${WEB_CHECKER_IMAGE:?Set WEB_CHECKER_IMAGE to the validated production image}
+    command:
+      - web-checker
+      - --config
+      - /etc/web-checker/jobs.yaml
+      - --database
+      - /data/web-checker.db
+      - worker
+    restart: unless-stopped
+    env_file:
+      - ${WEB_CHECKER_PRODUCTION_ENV_PATH:?Set WEB_CHECKER_PRODUCTION_ENV_PATH}
+    volumes:
+      - checker-data:/data
+      - type: bind
+        source: ${WEB_CHECKER_PRODUCTION_CONFIG_PATH:?Set WEB_CHECKER_PRODUCTION_CONFIG_PATH}
+        target: /etc/web-checker/jobs.yaml
+        read_only: true
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          from pathlib import Path;
+          command = Path('/proc/1/cmdline').read_bytes().split(b'\0');
+          checker = any(part == b'web-checker' or part.endswith(b'/web-checker') for part in command);
+          raise SystemExit(0 if checker and b'worker' in command else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  checker-data:

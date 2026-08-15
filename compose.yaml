@@ -1,7 +1,10 @@
+name: web-checker-development
+
 services:
   checker:
     build:
       context: .
+      target: development
     command:
       - web-checker
       - --config
@@ -19,6 +22,7 @@ services:
   mock-site:
     build:
       context: .
+      target: development
     command:
       - python3
       - -m

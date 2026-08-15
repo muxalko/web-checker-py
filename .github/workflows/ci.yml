@@ -51,4 +51,9 @@ jobs:
         run: pytest
 
       - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
+        run: |
+          docker compose config --quiet
+          WEB_CHECKER_IMAGE=web-checker-production:validation \
+            WEB_CHECKER_PRODUCTION_CONFIG_PATH=/dev/null \
+            WEB_CHECKER_PRODUCTION_ENV_PATH=/dev/null \
+            docker compose --file compose.production.yaml config --quiet

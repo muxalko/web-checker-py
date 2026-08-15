@@ -32,6 +32,10 @@ ruff check .
 pre-commit run --all-files
 pytest
 docker compose config
+WEB_CHECKER_IMAGE=web-checker-production:validation \
+  WEB_CHECKER_PRODUCTION_CONFIG_PATH=/dev/null \
+  WEB_CHECKER_PRODUCTION_ENV_PATH=/dev/null \
+  docker compose --file compose.production.yaml config --quiet
 ```
 
 When container behavior or dependencies change, also run:
