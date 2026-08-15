@@ -34,6 +34,7 @@ amount of swap.
 | Option | Representative monthly floor | Fit with current deployment | Main trade-off |
 | --- | ---: | --- | --- |
 | Existing local VM | $0 incremental | Excellent | The operator owns power, connectivity, patching, monitoring, and off-host backups. |
+| Google Cloud Free Tier `e2-micro` with external IPv4 | about $3.65 for IPv4 | Conditional | The eligible VM and 30 GB disk fit within the Free Tier, but its 1 GB RAM is tight for Docker builds and the public IPv4 address is billed separately. |
 | Hetzner Cloud CX23 in Europe | $6.49, excluding VAT and IPv4 | Excellent | Low price and 4 GB RAM, but the location may be farther from the checked provider and cost-optimized capacity is limited. |
 | DigitalOcean Basic Droplet, 2 GB | $12 | Excellent | Simple, predictable VM; backups add 20% weekly or 30% daily unless usage-based backup is selected. |
 | AWS Lightsail Linux, 2 GB with public IPv4 | $12 | Excellent | Predictable bundle and AWS regions; snapshots cost $0.05/GB-month. |
@@ -43,6 +44,16 @@ amount of swap.
 
 Price sources and qualifications:
 
+- Google Cloud's [Free Tier documentation](https://docs.cloud.google.com/free/docs/free-cloud-features#compute)
+  includes one non-preemptible `e2-micro` VM per month in `us-west1`,
+  `us-central1`, or `us-east1`, plus 30 GB-months of standard persistent disk.
+  The [E2 machine documentation](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2_machine_types)
+  lists 1 GB RAM for `e2-micro`. Google charges
+  [in-use external IPv4 addresses](https://cloud.google.com/vpc/network-pricing#ipaddress)
+  on standard VMs at $0.005 per hour, or about $3.65 for 730 hours. The worker
+  needs outbound internet access; an external IPv4 address is the simplest
+  option, while Cloud NAT adds its own charges and complexity. Billing-account,
+  traffic, region, and Free Tier limits still apply.
 - Hetzner lists the CX23 as 2 shared vCPUs, 4 GB RAM, and 40 GB storage. Its
   [15 June 2026 adjustment](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/)
   sets the European price at $6.49 per month excluding VAT and IPv4. The
@@ -90,11 +101,16 @@ shortlist.
    lowest listed price where its European location and capacity are acceptable;
    DigitalOcean and Lightsail are straightforward $12 alternatives with North
    American regions.
-3. **Treat Oracle Always Free as an experiment or disaster-recovery candidate.**
+3. **Consider Google Cloud's Free Tier when minimum recurring cost matters.**
+   Its approximately $3.65 monthly external-IPv4 charge makes it an inexpensive
+   x86-64 VM, but 1 GB RAM is below the recommended starting point. Validate
+   deployment memory first, add swap, and preferably build the production image
+   in CI instead of on the VM.
+4. **Treat Oracle Always Free as an experiment or disaster-recovery candidate.**
    Validate the multi-architecture image and runner on ARM first, and do not
    make a time-sensitive checker depend on free capacity or a resource subject
    to idle reclamation.
-4. **Do not migrate to a managed container platform yet.** Fly.io, Railway, and
+5. **Do not migrate to a managed container platform yet.** Fly.io, Railway, and
    Render can run the worker, but each requires platform-specific deployment and
    volume configuration. The current persistent self-hosted runner also assumes
    host-level Docker access. GitHub notes that the operator owns self-hosted
