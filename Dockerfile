@@ -28,16 +28,24 @@ RUN adduser \
 # to create and update its SQLite database.
 RUN install -d -o appuser -g appuser /data
 
-# Copy the project before installation. The project metadata in pyproject.toml is
-# the canonical dependency definition.
-COPY --chown=appuser:appuser . .
+FROM base AS production
 
-# Install the application and development tools used by the current prototype.
+# Production installs an immutable copy without development-only tooling.
+COPY --chown=appuser:appuser pyproject.toml README.md ./
+COPY --chown=appuser:appuser mock_site/ ./mock_site/
+COPY --chown=appuser:appuser web_checker/ ./web_checker/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install .
+
+USER appuser
+CMD ["web-checker", "--help"]
+
+FROM base AS development
+
+# Development keeps editable installation and the repository's test tools.
+COPY --chown=appuser:appuser . .
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --editable ".[dev]"
 
-# Switch to the non-privileged user to run the application.
 USER appuser
-
-# Default to the actual application CLI. Compose overrides this for the mock site.
 CMD ["web-checker", "--help"]

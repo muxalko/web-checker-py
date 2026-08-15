@@ -569,8 +569,9 @@ Each implementation stage has explicit minimum coverage:
 
 The default local and GitHub Actions verification gates run secret scanning,
 formatting, linting, unit and integration tests, and Docker Compose configuration
-validation. Container builds and end-to-end tests remain separate documented
-commands because they materially increase execution time.
+validation for both isolated deployment definitions. Container builds and
+end-to-end tests remain separate documented commands because they materially
+increase execution time.
 
 ## Delivery plan
 
@@ -814,6 +815,32 @@ issue because it does not change repository state. GitHub cannot guarantee that
 an issue remains open after a successful check without another event, so owner
 review also confirms it is still open immediately before merge.
 
+### D-019: Isolate local testing from post-merge production deployment
+
+**Status:** Accepted
+
+The local VM runs two Docker Compose projects that share no containers,
+networks, configuration, or data. `web-checker-development` is a manually
+started, disposable environment built from the current working tree. It includes
+the controlled mock site and is the only environment where development control
+endpoints are enabled. `web-checker-production` contains only the checker, reads
+its configuration and environment file from fixed host paths outside the
+repository, and persists SQLite state in its own Compose volume.
+
+Production deployment follows a successful post-merge `CI` workflow run for a
+push to `development`. A dedicated repository-scoped self-hosted runner with the
+`web-checker-production` label checks out the exact validated SHA. The deployment
+script rejects a dirty or mismatched checkout, builds the Dockerfile's lean
+production target, tags and labels the local image with the full SHA, and starts
+Compose with image building disabled. Pull-request workflows never target this
+runner. The runner's Docker access is treated as privileged production access.
+
+Deployments use a host file lock rather than cancellable GitHub concurrency so
+every queued merge is serialized. Re-delivery of the currently healthy SHA is
+idempotent. Compose health gating makes startup failures visible, retains the
+previous image locally, and automatically reapplies it after a failed update.
+Production data is never removed during deployment or rollback.
+
 ## Open decisions
 
 These should be resolved with implementation evidence rather than assumed now:
@@ -822,4 +849,3 @@ These should be resolved with implementation evidence rather than assumed now:
 - Retention period for observation history.
 - Whether opportunity matching needs a core rule language or should remain
   entirely driver-specific initially.
-- Deployment target after local Docker Compose.
