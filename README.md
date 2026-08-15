@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/logo.png" alt="Web Checker — Get that spot …" width="900">
+</p>
+
 # web-checker-py
 
 [![CI](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml)
@@ -101,15 +105,114 @@ Different jobs can run concurrently, but a job is never overlapped with itself.
 If an interval arrives while its previous execution or retry is still running,
 that occurrence is skipped rather than queued into a catch-up burst.
 
-## Configuration and one-shot checks
+## Worker operations cheatsheet
+
+Run these commands from the repository root. They operate the local development
+stack in [`compose.yaml`](compose.yaml), not a production deployment. The worker
+does not currently have a management UI or a `status` subcommand, so use Compose
+for process status, worker logs for execution status, and SQLite for the last
+successfully persisted state.
+
+Start the worker and mock provider in the background:
+
+```console
+docker compose up --build --detach
+```
+
+Stop the containers while preserving the `checker-data` state volume:
+
+```console
+docker compose down
+```
+
+### Validate configuration
 
 Validate the example configuration with:
 
 ```console
-docker compose run --rm checker \
+docker compose run --rm --no-deps checker \
   web-checker --config jobs.example.yaml \
   --database /data/web-checker.db validate-config
 ```
+
+`validate-config` checks the YAML structure, enabled integrations, parser
+settings, and configured schedule and retry bounds without contacting the
+provider or writing checker state.
+
+### Inspect worker status and activity
+
+Check whether the containers are running, then inspect recent or live worker
+events:
+
+```console
+docker compose ps
+docker compose logs --tail=100 checker
+docker compose logs --follow checker
+```
+
+`docker compose ps` reports container/process status only. A normally operating
+worker logs `worker event=started` and a recurring `event=check_succeeded` for
+each job. Investigate `event=retry_scheduled` and `event=check_failed` entries.
+An `event=overlap_skipped` entry means the preceding execution of that job was
+still running when its next interval arrived.
+
+### Inspect persisted state
+
+With the worker running, query its SQLite database in read-only mode:
+
+```console
+docker compose exec -T checker python3 - <<'PY'
+import sqlite3
+
+connection = sqlite3.connect(
+    "file:/data/web-checker.db?mode=ro",
+    uri=True,
+)
+queries = (
+    (
+        "Latest successful observations",
+        """
+        WITH latest AS (
+            SELECT job_id, MAX(id) AS run_id
+            FROM check_runs
+            GROUP BY job_id
+        )
+        SELECT latest.job_id, runs.checked_at,
+               observations.opportunity_id, observations.availability
+        FROM latest
+        JOIN check_runs AS runs ON runs.id = latest.run_id
+        JOIN opportunity_observations AS observations
+          ON observations.run_id = latest.run_id
+        ORDER BY latest.job_id, observations.position
+        """,
+    ),
+    (
+        "Pending notifications",
+        """
+        SELECT job_id, channel, opportunity_id, attempts, checked_at
+        FROM notification_outbox
+        WHERE delivered_at IS NULL
+        ORDER BY id
+        """,
+    ),
+)
+for heading, query in queries:
+    rows = connection.execute(query).fetchall()
+    print(f"{heading}:")
+    for row in rows:
+        print("  " + " | ".join(str(value) for value in row))
+    if not rows:
+        print("  (none)")
+connection.close()
+PY
+```
+
+The first report shows every opportunity in each job's latest successful
+snapshot. Failed checks intentionally do not replace that state, so consult the
+logs to determine whether later attempts failed. The second report lists
+notification deliveries still awaiting a successful send.
+
+### Run one job immediately
 
 Run the job once with:
 
