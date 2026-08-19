@@ -67,6 +67,7 @@ instance/
 
 # Local checker state
 *.db
+*.har
 *.db-shm
 *.db-wal
 
