@@ -237,10 +237,17 @@ new snapshot but do not currently produce transitions.
 Notifiers are interchangeable delivery adapters. Initial implementations are:
 
 - Console notifier for local development.
+- SMTP email notifier for real delivery using the generic title and source link.
 - Fake/capturing notifier for tests.
 
-Email, Telegram, Pushover, Slack, or generic webhooks can be added without
+Telegram, Pushover, Slack, or generic webhooks can be added without
 changing drivers or transition detection.
+
+Provider-specific attributes remain an opaque JSON mapping on stored
+opportunity observations. Notification outbox rows deliberately contain a fixed
+provider-independent subset; the email adapter does not read or copy the
+attributes blob. SMTP connection and address settings come from environment
+variables, with secret values excluded from job configuration and logs.
 
 Notification policy is configured per job as a set of transition types and
 named channels. Matching delivery intents are written to a durable SQLite outbox
@@ -476,7 +483,7 @@ The local Docker Compose environment is expected to contain:
 
 - `checker`: the scheduled checker.
 - `mock-site`: the controlled reservation provider.
-- An optional local email-capture service when email notification is added.
+- `mailpit`: a local-only SMTP and web inbox used to capture development email.
 
 ## Error handling and resilience
 
@@ -663,7 +670,8 @@ increase execution time.
   conservatively with an anonymous bounded GET.**
 - Implement a provider-specific driver using fixtures first. **Implemented for
   High Economic Impact draw publication with a provider-shaped local mock.**
-- Add a real notification channel.
+- Add a real notification channel. **Implemented with generic SMTP email, an
+  environment-backed registry, and a provider-shaped Mailpit acceptance test.**
 
 ## Recorded decisions
 
@@ -895,11 +903,25 @@ feed fails instead of replacing the baseline. A provider removing older events
 may create `disappeared` transitions, but publication jobs do not notify on them
 by default.
 
+### D-021: Keep delivery adapters on a narrow generic payload
+
+**Status:** Accepted
+
+Opportunity observations combine fixed provider-independent fields with an
+opaque provider-specific attributes mapping serialized as JSON. Notification
+delivery adapters consume only the fixed `PendingNotification` projection. The
+first SMTP adapter formats the existing opportunity title and source link and
+does not interpret or duplicate the attributes mapping.
+
+This keeps email reusable across all drivers and avoids a storage migration for
+the first real channel. A future richer notification contract must be justified
+as a provider-independent capability rather than exposing arbitrary driver data
+to adapters.
+
 ## Open decisions
 
 These should be resolved with implementation evidence rather than assumed now:
 
-- The first real notification channel.
 - Retention period for observation history.
 - Whether opportunity matching needs a core rule language or should remain
   entirely driver-specific initially.

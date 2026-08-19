@@ -82,8 +82,8 @@ working tree, including uncommitted changes, under the fixed project name
 docker compose up --build
 ```
 
-Its containers are named `web-checker-development-checker-1` and
-`web-checker-development-mock-site-1`. The worker writes state to
+Its services include the checker, the mock provider, and a local Mailpit email
+capture server. The worker writes state to
 `/data/web-checker.db` in a development-only volume. Stop it with `Ctrl+C` or
 `docker compose down`; SIGINT and SIGTERM initiate a bounded graceful shutdown
 so an in-progress check can finish. `docker compose down --volumes` removes only
@@ -245,18 +245,18 @@ alert; a newly published date later produces one `appeared` transition.
 
 The example is disabled so the development stack and default tests never contact
 WelcomeBC. Copy it to the operator-owned production configuration, review the
-URL and interval, and explicitly enable it when ready. The six-hour example
-cadence is intentionally conservative for a page that changes periodically:
+URL and interval, and explicitly enable it when ready. The hourly cadence makes
+24 requests per day and normally detects a publication within 60 minutes:
 
 ```yaml
 - id: welcomebc-high-impact-itas
   enabled: true
   driver: welcomebc_high_impact
   notify:
-    channels: [console]
+    channels: [email]
     on: [appeared]
   schedule:
-    interval_seconds: 21600
+    interval_seconds: 3600
   config:
     url: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
     timeout_seconds: 10
@@ -266,8 +266,48 @@ cadence is intentionally conservative for a page that changes periodically:
 The driver makes one anonymous, bounded HTTP GET per attempt and does not access
 BC PNP profiles or submit applications. Missing, empty, malformed, or changed
 provider structure fails the check and preserves the last successful baseline.
-The configured notification channel determines how the alert is delivered;
-`console` is the only real channel currently shipped.
+The worker checks immediately on startup and then hourly. Its first successful
+response establishes the historical baseline without sending an email. The
+official page supplies a draw date rather than an exact publication time, so the
+checker does not claim a more precise issuance time.
+
+## Email notifications
+
+The `email` channel sends a plain provider-independent message containing only
+the existing opportunity title and source link. For example:
+
+```text
+BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)
+
+https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+```
+
+The adapter does not inspect the driver's provider-specific `attributes` JSON,
+and adding email does not change the notification model or SQLite schema. Set
+these environment variables before enabling a job that selects `email`:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `WEB_CHECKER_SMTP_HOST` | Yes | SMTP server hostname |
+| `WEB_CHECKER_SMTP_FROM` | Yes | Plain sender email address |
+| `WEB_CHECKER_SMTP_TO` | Yes | Comma-separated plain recipient addresses |
+| `WEB_CHECKER_SMTP_PORT` | No | Defaults to 587 for STARTTLS |
+| `WEB_CHECKER_SMTP_SECURITY` | No | `starttls` (default), `implicit-tls`, or `none` |
+| `WEB_CHECKER_SMTP_USERNAME` | No | Authentication username; requires password |
+| `WEB_CHECKER_SMTP_PASSWORD` | No | Authentication secret; requires username |
+| `WEB_CHECKER_SMTP_TIMEOUT_SECONDS` | No | Connection timeout; defaults to 10 seconds |
+
+Use `starttls` on port 587 or `implicit-tls` on port 465 according to the SMTP
+provider. The `none` mode is intended only for a trusted local capture server.
+Any partial or invalid SMTP configuration fails startup without printing the
+password. Credentials belong in the operator-owned production environment file,
+never in `jobs.yaml` or Git.
+
+Normal deliveries are deduplicated through the durable outbox. A failed SMTP
+send remains pending and is attempted after a later successful check. Delivery
+is at-least-once across a process crash, so the narrow interval after an SMTP
+server accepts a message but before SQLite records success can produce a
+duplicate.
 
 Inspired by
 
@@ -319,6 +359,24 @@ Run the complete test suite inside the project image with:
 ```console
 docker compose run --rm --no-deps checker pytest
 ```
+
+Mailpit captures development email without sending anything externally. Its UI
+is available at `http://localhost:8025` after `docker compose up`. Run the
+opt-in end-to-end scenario—which establishes a mock WelcomeBC baseline,
+publishes one draw, captures one email, and verifies no duplicate—with:
+
+```console
+docker compose up --build --detach mailpit
+docker compose run --rm \
+  -e WEB_CHECKER_TEST_SMTP_HOST=mailpit \
+  -e WEB_CHECKER_TEST_MAILPIT_API=http://mailpit:8025 \
+  mock-site pytest -q \
+  tests/drivers/welcomebc_high_impact/test_email_mailpit_integration.py
+```
+
+If ports 1025 or 8025 are occupied, set `MAILPIT_SMTP_PORT` or
+`MAILPIT_HTTP_PORT`; communication between the containers continues to use the
+fixed internal ports.
 
 ## Production deployment
 

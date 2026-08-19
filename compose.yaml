@@ -14,10 +14,32 @@ services:
       - worker
     restart: unless-stopped
     depends_on:
+      mailpit:
+        condition: service_healthy
       mock-site:
         condition: service_healthy
+    environment:
+      WEB_CHECKER_SMTP_FROM: alerts@example.test
+      WEB_CHECKER_SMTP_HOST: mailpit
+      WEB_CHECKER_SMTP_PORT: "1025"
+      WEB_CHECKER_SMTP_SECURITY: none
+      WEB_CHECKER_SMTP_TO: operator@example.test
     volumes:
       - checker-data:/data
+
+  mailpit:
+    image: axllent/mailpit:v1.30.7
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_HTTP_PORT:-8025}:8025"
+    healthcheck:
+      test:
+        - CMD
+        - /mailpit
+        - readyz
+      interval: 2s
+      timeout: 3s
+      retries: 10
 
   mock-site:
     build:
