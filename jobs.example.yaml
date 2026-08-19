@@ -43,3 +43,26 @@ jobs:
             selector: ".status"
             attribute: data-capacity
             required: false
+
+  # Disabled by default so the development stack never contacts WelcomeBC
+  # unless an operator explicitly opts in. Point url at the local mock route
+  # for offline development.
+  - id: welcomebc-high-impact-itas
+    enabled: false
+    driver: welcomebc_high_impact
+    notify:
+      channels:
+        - console
+      on:
+        - appeared
+    schedule:
+      interval_seconds: 21600
+      retry:
+        max_attempts: 3
+        initial_delay_seconds: 30
+        max_delay_seconds: 300
+        jitter_fraction: 0.2
+    config:
+      url: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+      timeout_seconds: 10
+      max_response_bytes: 1048576

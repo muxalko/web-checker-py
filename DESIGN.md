@@ -13,11 +13,10 @@ evidence.
 
 ## Product vision
 
-Web Checker is a scheduled opportunity monitor for registration and reservation
-systems. A user defines a job describing what should be checked and when. The
-system invokes an interchangeable provider driver, compares the normalized result
-with previously observed state, and sends a notification when a relevant change
-occurs.
+Web Checker is a scheduled opportunity and published-event monitor. A user
+defines a job describing what should be checked and when. The system invokes an
+interchangeable provider driver, compares the normalized result with previously
+observed state, and sends a notification when a relevant change occurs.
 
 Examples include:
 
@@ -25,11 +24,12 @@ Examples include:
 - A park day pass becomes available.
 - A campsite, appointment, ticket, or other limited opportunity becomes
   available.
+- A government program publishes a new invitation draw.
 
-The first prototype will not poll a real third-party website. It will use a
-locally controlled mock reservation site and a generic HTML driver. This allows
-the complete system to be developed and tested deterministically without placing
-load on an external service.
+The prototype began with a locally controlled mock reservation site and generic
+HTML driver. Provider-specific integrations continue to use static fixtures,
+mocked transports, and provider-shaped local routes for deterministic default
+testing without placing load on external services.
 
 ## Goals
 
@@ -66,9 +66,10 @@ configuration validation.
 
 ### Small normalized model
 
-The shared model represents stable identity, availability, relevant time,
-human-readable context, and an optional booking link. Provider-specific details
-remain in extensible attributes or inside the driver.
+The shared model represents stable identity, availability or publication
+presence, relevant time, human-readable context, and an optional source or
+booking link. Provider-specific details remain in extensible attributes or
+inside the driver.
 
 ### Separate observation from action
 
@@ -218,6 +219,11 @@ previous completed observation for the same job. Initial transition types are:
 Notifications are policy-driven. The default useful policy is to notify on
 `became_available`, not on every successful observation.
 
+Append-only publication drivers represent each published event as an
+always-available opportunity and notify on `appeared`. Their first successful
+snapshot establishes a baseline of existing publications, so only later IDs
+produce alerts.
+
 An incomplete or failed check must not be interpreted as every opportunity
 disappearing.
 
@@ -250,11 +256,13 @@ adapter succeeds but the process stops before SQLite records success, that item
 will be retried. Adapters added in the future should use provider idempotency keys
 where available.
 
-### Mock reservation site
+### Controlled mock providers
 
-The mock site is a fake provider, not part of the checker core and not itself a
-driver. It presents a small reservation page containing stable opportunity IDs,
-times, availability states, capacity, and booking links.
+The mock site contains fake providers, not checker-core behavior and not drivers.
+It presents a small reservation page containing stable opportunity IDs, times,
+availability states, capacity, and booking links. It also presents a
+provider-shaped WelcomeBC Skills Immigration page with table rowspans, target and
+non-target invitation rows, and narrative history.
 
 A development-only control API changes its state deterministically. It should
 support scenarios including:
@@ -266,6 +274,7 @@ support scenarios including:
 - Server error.
 - Slow response.
 - Malformed or unexpectedly structured HTML.
+- Publication of one new High Economic Impact draw.
 
 Control endpoints must not be enabled in a production deployment.
 
@@ -315,6 +324,24 @@ config:
       selector: "a.book"
       attribute: href
 ```
+
+### WelcomeBC High Economic Impact driver
+
+The provider-specific `welcomebc_high_impact` driver performs one anonymous GET
+of the public BC PNP Invitations to Apply page. It interprets only Skills
+Immigration entries labeled `Innovate: High Economic Impact`, groups multiple
+selection routes under one date, and emits one always-available opportunity with
+a stable date-based ID. The opportunity source link is the final response URL;
+provider details such as route factors, minimum scores, invitation counts, and
+an exact total remain in attributes.
+
+The driver also recognizes older same-page narrative entries so table-to-prose
+movement does not create duplicate draw IDs. The structured table is
+authoritative if the same date appears in both formats. Missing target sections,
+changed headers, zero target draws, malformed dates or counts, inconsistent
+duplicates, non-HTML content, oversized bodies, and request failures fail the
+check. Tests use minimal fixtures, mocked HTTP transports, and the local
+provider-shaped mock; live access is manual and opt-in.
 
 ## Initial domain model
 
@@ -538,6 +565,10 @@ test suite.
 5. Observe exactly one `became_available` notification.
 6. Run another unchanged check and observe no duplicate notification.
 
+Published-event drivers add an analogous acceptance path: establish a baseline,
+publish one event through the local mock control, observe exactly one `appeared`
+notification, and confirm an unchanged follow-up emits none.
+
 Tests for external providers should primarily use sanitized captured fixtures.
 Live-provider tests, if ever added, must be explicit, infrequent, and excluded
 from the default test suite.
@@ -624,9 +655,14 @@ increase execution time.
 
 ### Milestone 5: first external provider
 
-- Research candidate providers and their policies.
-- Prefer an official API or structured endpoint where permitted.
-- Implement a provider-specific driver using fixtures first.
+- Research candidate providers and their policies. **Implemented for the public
+  WelcomeBC Invitations to Apply page; its robots policy does not exclude the
+  monitored path.**
+- Prefer an official API or structured endpoint where permitted. **WelcomeBC
+  exposes the relevant data as server-rendered public HTML, which is fetched
+  conservatively with an anonymous bounded GET.**
+- Implement a provider-specific driver using fixtures first. **Implemented for
+  High Economic Impact draw publication with a provider-shaped local mock.**
 - Add a real notification channel.
 
 ## Recorded decisions
@@ -840,6 +876,24 @@ every queued merge is serialized. Re-delivery of the currently healthy SHA is
 idempotent. Compose health gating makes startup failures visible, retains the
 previous image locally, and automatically reapplies it after a failed update.
 Production data is never removed during deployment or rollback.
+
+### D-020: Model append-only publications with appeared opportunities
+
+**Status:** Accepted
+
+Published provider events use the existing opportunity and transition model
+rather than introducing provider-specific core concepts. A driver returns every
+publication still present in its trusted source with a stable event ID and
+`available` state. The initial complete snapshot establishes a baseline; a new
+ID later produces `appeared`, which a job selects explicitly in its notification
+policy. Publication metadata remains in attributes and the source page occupies
+the existing link field.
+
+Drivers must group multiple provider rows that describe one event before crossing
+the core boundary. An unexpectedly empty, structurally changed, or inconsistent
+feed fails instead of replacing the baseline. A provider removing older events
+may create `disappeared` transitions, but publication jobs do not notify on them
+by default.
 
 ## Open decisions
 

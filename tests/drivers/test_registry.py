@@ -4,7 +4,7 @@ import pytest
 
 from web_checker.core.models import CheckResult
 from web_checker.drivers.errors import DriverRegistrationError, UnknownDriverError
-from web_checker.drivers.registry import DriverRegistry
+from web_checker.drivers.registry import DriverRegistry, create_default_registry
 
 
 class FakeDriver:
@@ -42,3 +42,10 @@ def test_registry_reports_unknown_driver_and_available_names():
 
     with pytest.raises(UnknownDriverError, match="registered drivers: fake"):
         registry.get("missing")
+
+
+def test_default_registry_contains_shipped_drivers():
+    assert create_default_registry().names() == (
+        "generic_html",
+        "welcomebc_high_impact",
+    )

@@ -6,8 +6,9 @@
 
 [![CI](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml)
 
-An extensible scheduled checker that detects registration and reservation
-opportunities and sends notifications when availability changes.
+An extensible scheduled checker that detects registration, reservation, and
+published-event opportunities and sends notifications when relevant changes
+occur.
 
 The prototype is provider-independent, with interchangeable drivers. It is
 developed against a controlled mock reservation site and a generic HTML driver
@@ -70,11 +71,12 @@ removed.
 
 ## Scheduled operation
 
-[`jobs.example.yaml`](jobs.example.yaml) defines a generic HTML job for the mock
-reservation site. It runs immediately when the worker starts and every 60
-seconds afterward. The default Compose file is exclusively the development test
-stack. It builds the current working tree, including uncommitted changes, under
-the fixed project name `web-checker-development`:
+[`jobs.example.yaml`](jobs.example.yaml) defines an enabled generic HTML job for
+the mock reservation site and a disabled WelcomeBC example. The enabled job runs
+immediately when the worker starts and every 60 seconds afterward. The default
+Compose file is exclusively the development test stack. It builds the current
+working tree, including uncommitted changes, under the fixed project name
+`web-checker-development`:
 
 ```console
 docker compose up --build
@@ -232,12 +234,47 @@ available. Notification intents are persisted with the transition, successful
 deliveries are deduplicated, and failed deliveries remain pending for retry on a
 later check.
 
+## WelcomeBC High Economic Impact draws
+
+The `welcomebc_high_impact` driver monitors the public
+[WelcomeBC Invitations to Apply page](https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply)
+for `Innovate: High Economic Impact` Skills Immigration draws. Multiple
+selection-factor rows under one date are grouped into one opportunity with a
+stable date-based ID. Historical draws establish the first baseline without an
+alert; a newly published date later produces one `appeared` transition.
+
+The example is disabled so the development stack and default tests never contact
+WelcomeBC. Copy it to the operator-owned production configuration, review the
+URL and interval, and explicitly enable it when ready. The six-hour example
+cadence is intentionally conservative for a page that changes periodically:
+
+```yaml
+- id: welcomebc-high-impact-itas
+  enabled: true
+  driver: welcomebc_high_impact
+  notify:
+    channels: [console]
+    on: [appeared]
+  schedule:
+    interval_seconds: 21600
+  config:
+    url: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+    timeout_seconds: 10
+    max_response_bytes: 1048576
+```
+
+The driver makes one anonymous, bounded HTTP GET per attempt and does not access
+BC PNP profiles or submit applications. Missing, empty, malformed, or changed
+provider structure fails the check and preserves the last successful baseline.
+The configured notification channel determines how the alert is delivered;
+`console` is the only real channel currently shipped.
+
 Inspired by
 
 - https://www.geeksforgeeks.org/python-script-to-monitor-website-changes/
 - https://docs.docker.com/language/python/containerize/
 
-## Mock reservation site
+## Mock providers
 
 The first development provider is a controlled local reservation website. Start
 it with:
@@ -246,8 +283,10 @@ it with:
 docker compose up --build mock-site
 ```
 
-Then open `http://localhost:8080/reservations/2026-08-22`. The Compose environment
-enables a development-only control API:
+Then open `http://localhost:8080/reservations/2026-08-22` for the generic
+reservation provider or
+`http://localhost:8080/welcomebc/invitations-to-apply` for the provider-shaped
+WelcomeBC page. The Compose environment enables a development-only control API:
 
 ```console
 curl -X PATCH http://localhost:8080/__control/opportunities/midday-pass \
@@ -258,11 +297,20 @@ curl -X PATCH http://localhost:8080/__control/behavior \
   -H 'Content-Type: application/json' \
   -d '{"status_code":503}'
 
+curl -X POST http://localhost:8080/__control/welcomebc/publish
+
+curl -X PATCH http://localhost:8080/__control/welcomebc/behavior \
+  -H 'Content-Type: application/json' \
+  -d '{"malformed":true}'
+
 curl -X POST http://localhost:8080/__control/reset
 ```
 
-Set an opportunity's `enabled` field to `false` to simulate its disappearance.
-The controls return HTTP 404 unless `MOCK_SITE_CONTROLS_ENABLED=true`.
+Publishing the mock WelcomeBC draw is idempotent; reset removes it and restores
+all default behavior. Set a reservation opportunity's `enabled` field to `false`
+to simulate its disappearance. Both provider controls can simulate delay,
+malformed content, or an HTTP error. The controls return HTTP 404 unless
+`MOCK_SITE_CONTROLS_ENABLED=true`.
 If port 8080 is already occupied, set another host port, for example
 `MOCK_SITE_PORT=18080 docker compose up mock-site`.
 

@@ -108,6 +108,21 @@ def test_validate_config_validates_driver_specific_rules(tmp_path, fixture_html)
     assert stderr == ""
 
 
+def test_example_configuration_validates_with_shipped_integrations():
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["--config", "jobs.example.yaml", "validate-config"],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == "Configuration valid: 2 job(s)\n"
+    assert stderr.getvalue() == ""
+
+
 def test_check_prints_normalized_opportunities(tmp_path, fixture_html):
     path = write_job_config(tmp_path)
 
