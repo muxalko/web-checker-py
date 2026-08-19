@@ -15,7 +15,19 @@ def test_compose_projects_are_explicit_and_isolated() -> None:
     production = load_yaml("compose.production.yaml")
 
     assert development["name"] == "web-checker-development"
-    assert set(development["services"]) == {"checker", "mock-site"}
+    assert set(development["services"]) == {"checker", "mailpit", "mock-site"}
+    assert development["services"]["checker"]["environment"] == {
+        "WEB_CHECKER_SMTP_FROM": "alerts@example.test",
+        "WEB_CHECKER_SMTP_HOST": "mailpit",
+        "WEB_CHECKER_SMTP_PORT": "1025",
+        "WEB_CHECKER_SMTP_SECURITY": "none",
+        "WEB_CHECKER_SMTP_TO": "operator@example.test",
+    }
+    assert development["services"]["checker"]["depends_on"] == {
+        "mailpit": {"condition": "service_healthy"},
+        "mock-site": {"condition": "service_healthy"},
+    }
+    assert development["services"]["mailpit"]["image"] == ("axllent/mailpit:v1.30.7")
     assert development["services"]["mock-site"]["environment"] == {
         "MOCK_SITE_CONTROLS_ENABLED": "true"
     }

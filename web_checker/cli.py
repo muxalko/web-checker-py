@@ -15,8 +15,11 @@ from web_checker.core.service import CheckService
 from web_checker.core.transitions import OpportunityTransition
 from web_checker.drivers.errors import DriverError
 from web_checker.drivers.registry import DriverRegistry, create_default_registry
-from web_checker.notifications.console import ConsoleNotifier
-from web_checker.notifications.registry import NotifierRegistry, NotifierRegistryError
+from web_checker.notifications.registry import (
+    NotifierRegistry,
+    NotifierRegistryError,
+    create_default_notifier_registry,
+)
 from web_checker.notifications.service import NotificationService
 from web_checker.storage import SQLiteObservationStore, StorageError
 
@@ -55,11 +58,11 @@ def main(
     errors = stderr or sys.stderr
     arguments = build_parser().parse_args(argv)
     selected_registry = registry or create_default_registry()
-    selected_notifiers = notifier_registry or NotifierRegistry(
-        [ConsoleNotifier(output)]
-    )
 
     try:
+        selected_notifiers = notifier_registry or create_default_notifier_registry(
+            output
+        )
         config = load_config(arguments.config)
         if arguments.command == "validate-config":
             _validate_integrations(config, selected_registry, selected_notifiers)
@@ -126,8 +129,9 @@ def _validate_integrations(
 ) -> None:
     for job in config.jobs:
         registry.get(job.driver).validate_config(job.config)
-        for channel in job.notifications.channels:
-            notifier_registry.get(channel)
+        if job.enabled:
+            for channel in job.notifications.channels:
+                notifier_registry.get(channel)
 
 
 def _validate_worker_schedules(config: ApplicationConfig) -> None:

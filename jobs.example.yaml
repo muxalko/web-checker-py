@@ -52,11 +52,11 @@ jobs:
     driver: welcomebc_high_impact
     notify:
       channels:
-        - console
+        - email
       on:
         - appeared
     schedule:
-      interval_seconds: 21600
+      interval_seconds: 3600
       retry:
         max_attempts: 3
         initial_delay_seconds: 30
