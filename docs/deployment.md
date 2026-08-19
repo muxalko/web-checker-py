@@ -1,5 +1,8 @@
 # Local VM deployment runbook
 
+For the rationale, current price comparison, and migration triggers, see
+[Hosting options](hosting-options.md).
+
 The local VM hosts two isolated Docker Compose projects. They share only the
 Docker daemon:
 
