@@ -44,5 +44,8 @@ class DriverRegistry:
 def create_default_registry() -> DriverRegistry:
     """Build the registry of drivers shipped with this application."""
     from web_checker.drivers.generic_html.driver import GenericHtmlDriver
+    from web_checker.drivers.welcomebc_high_impact.driver import (
+        WelcomeBCHighImpactDriver,
+    )
 
-    return DriverRegistry([GenericHtmlDriver()])
+    return DriverRegistry([GenericHtmlDriver(), WelcomeBCHighImpactDriver()])
