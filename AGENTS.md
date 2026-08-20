@@ -11,6 +11,14 @@
 - Merge changes only through a pull request targeting `development`. The pull
   request body must contain `Closes #<issue-number>` matching the branch, and the
   issue must remain open until the pull request is merged.
+- Use the `muxalko-web-checker-codex` GitHub App identity for every GitHub write
+  performed by an agent, including creating issues or pull requests and pushing
+  branches. Authenticate with a short-lived installation token generated from
+  App ID `4567062` and private key
+  `~/workspace/.config/web-checker-codex/private-key.pem`; do not use the
+  repository owner's personal `gh` or Git credentials. Configure agent-created
+  commits with the App bot identity. Never print, commit, or persist the private
+  key or installation token in repository configuration.
 - Keep the checker core provider-independent. Provider communication and parsing
   belong behind driver contracts.
 - Keep availability checks read-only. Do not add reservation, purchasing,
