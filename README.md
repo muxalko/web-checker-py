@@ -322,7 +322,7 @@ facility, and reservation endpoints. It never submits a reservation, starts a
 checkout, authenticates, handles CAPTCHA, cancels a pass, or sends personal
 information. A job selects one park, facility, and slot while the driver exposes
 the provider's rolling booking window as dated opportunities in chronological
-order.
+order. `rolling_window` is the only supported date strategy for this driver.
 
 ```yaml
 driver: bcparks_dayuse
