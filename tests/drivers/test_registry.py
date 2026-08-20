@@ -46,6 +46,7 @@ def test_registry_reports_unknown_driver_and_available_names():
 
 def test_default_registry_contains_shipped_drivers():
     assert create_default_registry().names() == (
+        "bcparks_dayuse",
         "generic_html",
         "welcomebc_high_impact",
     )

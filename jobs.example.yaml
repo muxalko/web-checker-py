@@ -1,4 +1,28 @@
 jobs:
+  - id: golden-ears-south-beach-am
+    enabled: true
+    driver: bcparks_dayuse
+    notify:
+      channels:
+        - console
+      on:
+        - became_available
+    schedule:
+      interval_seconds: 300
+      retry:
+        max_attempts: 3
+        initial_delay_seconds: 5
+        max_delay_seconds: 60
+        jitter_fraction: 0.2
+    config:
+      base_url: http://mock-site:8080/bcparks
+      park_id: "0008"
+      facility: Alouette Lake South Beach Day-Use Parking Lot
+      slot: AM
+      date_strategy: rolling_window
+      timeout_seconds: 10
+      max_response_bytes: 262144
+
   - id: mock-adventure-passes
     enabled: true
     driver: generic_html

@@ -120,7 +120,7 @@ def test_example_configuration_validates_with_shipped_integrations():
     )
 
     assert exit_code == 0
-    assert stdout.getvalue() == "Configuration valid: 2 job(s)\n"
+    assert stdout.getvalue() == "Configuration valid: 3 job(s)\n"
     assert stderr.getvalue() == ""
 
 
