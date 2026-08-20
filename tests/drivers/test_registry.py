@@ -44,5 +44,9 @@ def test_registry_reports_unknown_driver_and_available_names():
         registry.get("missing")
 
 
-def test_default_registry_contains_generic_and_bc_parks_drivers():
-    assert create_default_registry().names() == ("bcparks_dayuse", "generic_html")
+def test_default_registry_contains_shipped_drivers():
+    assert create_default_registry().names() == (
+        "bcparks_dayuse",
+        "generic_html",
+        "welcomebc_high_impact",
+    )

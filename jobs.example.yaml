@@ -22,3 +22,71 @@ jobs:
       date_strategy: rolling_window
       timeout_seconds: 10
       max_response_bytes: 262144
+
+  - id: mock-adventure-passes
+    enabled: true
+    driver: generic_html
+    notify:
+      channels:
+        - console
+      on:
+        - became_available
+    schedule:
+      interval_seconds: 60
+      retry:
+        max_attempts: 3
+        initial_delay_seconds: 5
+        max_delay_seconds: 60
+        jitter_fraction: 0.2
+    config:
+      url: http://mock-site:8080/reservations/2026-08-22
+      timeout_seconds: 5
+      max_response_bytes: 262144
+      parser:
+        opportunity_selector: "[data-opportunity-id]"
+        id:
+          attribute: data-opportunity-id
+        title:
+          selector: ".title"
+        availability:
+          selector: ".status"
+          attribute: data-status
+        availability_mapping:
+          available: available
+          sold-out: unavailable
+          unknown: unknown
+        starts_at:
+          selector: time
+          attribute: datetime
+        booking_url:
+          selector: "a.book"
+          attribute: href
+          required: false
+        attributes:
+          capacity:
+            selector: ".status"
+            attribute: data-capacity
+            required: false
+
+  # Disabled by default so the development stack never contacts WelcomeBC
+  # unless an operator explicitly opts in. Point url at the local mock route
+  # for offline development.
+  - id: welcomebc-high-impact-itas
+    enabled: false
+    driver: welcomebc_high_impact
+    notify:
+      channels:
+        - email
+      on:
+        - appeared
+    schedule:
+      interval_seconds: 3600
+      retry:
+        max_attempts: 3
+        initial_delay_seconds: 30
+        max_delay_seconds: 300
+        jitter_fraction: 0.2
+    config:
+      url: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+      timeout_seconds: 10
+      max_response_bytes: 1048576

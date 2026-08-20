@@ -13,11 +13,10 @@ evidence.
 
 ## Product vision
 
-Web Checker is a scheduled opportunity monitor for registration and reservation
-systems. A user defines a job describing what should be checked and when. The
-system invokes an interchangeable provider driver, compares the normalized result
-with previously observed state, and sends a notification when a relevant change
-occurs.
+Web Checker is a scheduled opportunity and published-event monitor. A user
+defines a job describing what should be checked and when. The system invokes an
+interchangeable provider driver, compares the normalized result with previously
+observed state, and sends a notification when a relevant change occurs.
 
 Examples include:
 
@@ -25,12 +24,13 @@ Examples include:
 - A park day pass becomes available.
 - A campsite, appointment, ticket, or other limited opportunity becomes
   available.
+- A government program publishes a new invitation draw.
 
-The initial prototype used a locally controlled reservation site and a generic
-HTML driver. The first external integration adds a BC Parks day-use driver backed
-by anonymous structured endpoints. Development and automated tests still use a
-production-shaped local mock, keeping provider traffic out of the default
-workflow while exercising the real contract boundaries.
+The prototype began with a locally controlled mock reservation site and generic
+HTML driver. Provider-specific integrations, including BC Parks day-use and
+WelcomeBC draws, use static fixtures, mocked transports, and provider-shaped
+local routes for deterministic default testing without placing load on external
+services.
 
 ## Goals
 
@@ -67,9 +67,10 @@ configuration validation.
 
 ### Small normalized model
 
-The shared model represents stable identity, availability, relevant time,
-human-readable context, and an optional booking link. Provider-specific details
-remain in extensible attributes or inside the driver.
+The shared model represents stable identity, availability or publication
+presence, relevant time, human-readable context, and an optional source or
+booking link. Provider-specific details remain in extensible attributes or
+inside the driver.
 
 ### Separate observation from action
 
@@ -220,6 +221,11 @@ previous completed observation for the same job. Initial transition types are:
 Notifications are policy-driven. The default useful policy is to notify on
 `became_available`, not on every successful observation.
 
+Append-only publication drivers represent each published event as an
+always-available opportunity and notify on `appeared`. Their first successful
+snapshot establishes a baseline of existing publications, so only later IDs
+produce alerts.
+
 An incomplete or failed check must not be interpreted as every opportunity
 disappearing.
 
@@ -233,10 +239,17 @@ new snapshot but do not currently produce transitions.
 Notifiers are interchangeable delivery adapters. Initial implementations are:
 
 - Console notifier for local development.
+- SMTP email notifier for real delivery using the generic title and source link.
 - Fake/capturing notifier for tests.
 
-Email, Telegram, Pushover, Slack, or generic webhooks can be added without
+Telegram, Pushover, Slack, or generic webhooks can be added without
 changing drivers or transition detection.
+
+Provider-specific attributes remain an opaque JSON mapping on stored
+opportunity observations. Notification outbox rows deliberately contain a fixed
+provider-independent subset; the email adapter does not read or copy the
+attributes blob. SMTP connection and address settings come from environment
+variables, with secret values excluded from job configuration and logs.
 
 Notification policy is configured per job as a set of transition types and
 named channels. Matching delivery intents are written to a durable SQLite outbox
@@ -252,15 +265,15 @@ adapter succeeds but the process stops before SQLite records success, that item
 will be retried. Adapters added in the future should use provider idempotency keys
 where available.
 
-### Mock reservation site
+### Controlled mock providers
 
-The mock site is a fake provider, not part of the checker core and not itself a
-driver. It retains the generic HTML reservation page and also exposes a
-production-shaped BC Parks surface under `/bcparks`: anonymous config, park,
-facility, and reservation endpoints plus a human-readable selection page. The BC
-Parks mock contains the sanitized park, facility, slot, capacity, booking-day,
-and rolling-window shapes captured during provider research. Raw HAR captures
-are ignored and are not test fixtures.
+The mock site contains fake providers, not checker-core behavior and not drivers.
+It presents a small generic reservation page, a provider-shaped WelcomeBC Skills
+Immigration page, and a production-shaped BC Parks surface under `/bcparks` with
+anonymous config, park, facility, and reservation endpoints plus a human-readable
+selection page. The BC Parks mock contains sanitized park, facility, slot,
+capacity, booking-day, and rolling-window shapes captured during provider
+research. Raw HAR captures are ignored and are not test fixtures.
 
 A development-only control API changes its state deterministically. It should
 support scenarios including:
@@ -274,6 +287,7 @@ support scenarios including:
 - Malformed or unexpectedly structured HTML or JSON.
 - Provider-local clock changes and pre-opening inventory.
 - Park and facility closures or visibility changes.
+- Publication of one new High Economic Impact draw.
 
 Control endpoints must not be enabled in a production deployment.
 
@@ -346,6 +360,24 @@ until its booking opening time. After opening, `Full` with a zero maximum maps t
 catalogs, missing dates or slots, unknown states, inconsistent capacity, and
 closed or hidden selections fail the check so the last good snapshot is not
 replaced by a false disappearance.
+
+### WelcomeBC High Economic Impact driver
+
+The provider-specific `welcomebc_high_impact` driver performs one anonymous GET
+of the public BC PNP Invitations to Apply page. It interprets only Skills
+Immigration entries labeled `Innovate: High Economic Impact`, groups multiple
+selection routes under one date, and emits one always-available opportunity with
+a stable date-based ID. The opportunity source link is the final response URL;
+provider details such as route factors, minimum scores, invitation counts, and
+an exact total remain in attributes.
+
+The driver also recognizes older same-page narrative entries so table-to-prose
+movement does not create duplicate draw IDs. The structured table is
+authoritative if the same date appears in both formats. Missing target sections,
+changed headers, zero target draws, malformed dates or counts, inconsistent
+duplicates, non-HTML content, oversized bodies, and request failures fail the
+check. Tests use minimal fixtures, mocked HTTP transports, and the local
+provider-shaped mock; live access is manual and opt-in.
 
 ## Initial domain model
 
@@ -480,7 +512,7 @@ The local Docker Compose environment is expected to contain:
 
 - `checker`: the scheduled checker.
 - `mock-site`: the controlled reservation provider.
-- An optional local email-capture service when email notification is added.
+- `mailpit`: a local-only SMTP and web inbox used to capture development email.
 
 ## Error handling and resilience
 
@@ -572,6 +604,10 @@ suite.
 5. Observe exactly one `became_available` notification.
 6. Run another unchanged check and observe no duplicate notification.
 
+Published-event drivers add an analogous acceptance path: establish a baseline,
+publish one event through the local mock control, observe exactly one `appeared`
+notification, and confirm an unchanged follow-up emits none.
+
 Tests for external providers should primarily use sanitized captured fixtures.
 Live-provider tests, if ever added, must be explicit, infrequent, and excluded
 from the default test suite.
@@ -659,13 +695,16 @@ increase execution time.
 ### Milestone 5: first external provider
 
 - Research candidate providers and their policies. **BC Parks day-use endpoint
-  behavior and public catalog shapes have been captured and sanitized.**
+  behavior and public catalog shapes have been captured and sanitized; the
+  public WelcomeBC Invitations to Apply page has also been evaluated.**
 - Prefer an official API or structured endpoint where permitted. **Implemented
-  using the anonymous structured endpoints used by the public day-use site.**
-- Implement a provider-specific driver using fixtures first. **Implemented with
-  strict fixture parsers, a production-shaped local mock, and offline driver
-  integration tests.**
-- Add a real notification channel.
+  with anonymous structured endpoints for BC Parks day-use and a bounded
+  anonymous GET of WelcomeBC's server-rendered public HTML.**
+- Implement a provider-specific driver using fixtures first. **Implemented for
+  BC Parks day-use and High Economic Impact draw publication with strict fixture
+  parsers and provider-shaped local mocks.**
+- Add a real notification channel. **Implemented with generic SMTP email, an
+  environment-backed registry, and a provider-shaped Mailpit acceptance test.**
 
 ## Recorded decisions
 
@@ -879,16 +918,48 @@ idempotent. Compose health gating makes startup failures visible, retains the
 previous image locally, and automatically reapplies it after a failed update.
 Production data is never removed during deployment or rollback.
 
-### D-020: Use anonymous structured BC Parks endpoints behind a local mock
+### D-020: Model append-only publications with appeared opportunities
 
 **Status:** Accepted
 
-The first external provider uses BC Parks day-use anonymous config, park,
-facility, and reservation endpoints instead of automating the site's browser UI.
-The driver performs only bounded `GET` requests and keeps all protocol parsing,
-provider time, slot, capacity, and booking-window rules behind the driver
-contract. It does not authenticate, reserve, cancel, purchase, or send personal
-information.
+Published provider events use the existing opportunity and transition model
+rather than introducing provider-specific core concepts. A driver returns every
+publication still present in its trusted source with a stable event ID and
+`available` state. The initial complete snapshot establishes a baseline; a new
+ID later produces `appeared`, which a job selects explicitly in its notification
+policy. Publication metadata remains in attributes and the source page occupies
+the existing link field.
+
+Drivers must group multiple provider rows that describe one event before crossing
+the core boundary. An unexpectedly empty, structurally changed, or inconsistent
+feed fails instead of replacing the baseline. A provider removing older events
+may create `disappeared` transitions, but publication jobs do not notify on them
+by default.
+
+### D-021: Keep delivery adapters on a narrow generic payload
+
+**Status:** Accepted
+
+Opportunity observations combine fixed provider-independent fields with an
+opaque provider-specific attributes mapping serialized as JSON. Notification
+delivery adapters consume only the fixed `PendingNotification` projection. The
+first SMTP adapter formats the existing opportunity title and source link and
+does not interpret or duplicate the attributes mapping.
+
+This keeps email reusable across all drivers and avoids a storage migration for
+the first real channel. A future richer notification contract must be justified
+as a provider-independent capability rather than exposing arbitrary driver data
+to adapters.
+
+### D-022: Use anonymous structured BC Parks endpoints behind a local mock
+
+**Status:** Accepted
+
+The BC Parks day-use integration uses anonymous config, park, facility, and
+reservation endpoints instead of automating the site's browser UI. The driver
+performs only bounded `GET` requests and keeps all protocol parsing, provider
+time, slot, capacity, and booking-window rules behind the driver contract. It
+does not authenticate, reserve, cancel, purchase, or send personal information.
 
 A configurable base URL and production-shaped local mock make fixture and mock
 testing the default. The mock covers the captured park/facility catalog and
@@ -906,7 +977,6 @@ reporting false disappearances.
 
 These should be resolved with implementation evidence rather than assumed now:
 
-- The first real notification channel.
 - Retention period for observation history.
 - Whether opportunity matching needs a core rule language or should remain
   entirely driver-specific initially.

@@ -19,7 +19,11 @@ from web_checker.drivers.bcparks_dayuse.errors import (
     BCParksResponseTooLargeError,
     BCParksTimeoutError,
 )
-from web_checker.drivers.bcparks_dayuse.models import Facility, ReservationSlot
+from web_checker.drivers.bcparks_dayuse.models import (
+    Facility,
+    ProviderConfig,
+    ReservationSlot,
+)
 from web_checker.drivers.bcparks_dayuse.parser import (
     decode_json,
     parse_facilities,
@@ -209,6 +213,7 @@ class BCParksDayUseDriver:
         opportunities = self._build_opportunities(
             parsed,
             park_name=park.name,
+            provider_config=provider_config,
             facility=facility,
             reservations=reservations,
         )
@@ -253,20 +258,54 @@ class BCParksDayUseDriver:
         config: BCParksDayUseConfig,
         *,
         park_name: str,
+        provider_config: ProviderConfig,
         facility: Facility,
         reservations: tuple[ReservationSlot, ...],
     ) -> tuple[Opportunity, ...]:
         provider_now = facility.current_time.astimezone(PROVIDER_TIMEZONE)
         local_today = provider_now.date()
         latest_date = local_today + timedelta(days=facility.booking_days_ahead)
+        expected_dates = {
+            local_today + timedelta(days=offset)
+            for offset in range(facility.booking_days_ahead + 1)
+        }
+        response_dates = {item.date for item in reservations}
+        if response_dates != expected_dates:
+            missing = sorted(expected_dates - response_dates)
+            unexpected = sorted(response_dates - expected_dates)
+            details = []
+            if missing:
+                details.append(
+                    "missing " + ", ".join(item.isoformat() for item in missing)
+                )
+            if unexpected:
+                details.append(
+                    "unexpected " + ", ".join(item.isoformat() for item in unexpected)
+                )
+            raise BCParksParseError(
+                "Reservation response dates do not match the booking window: "
+                + "; ".join(details)
+            )
+
         matching = [item for item in reservations if item.slot == config.slot]
         dates = {item.date for item in matching}
-        expected_dates = {item.date for item in reservations}
-        if dates != expected_dates:
-            missing = sorted(expected_dates - dates)
+        if dates != response_dates:
+            missing = sorted(response_dates - dates)
             raise BCParksParseError(
                 f"Reservation response is missing slot {config.slot!r} for dates: "
                 + ", ".join(item.isoformat() for item in missing)
+            )
+
+        pass_limit = (
+            provider_config.parking_pass_limit
+            if facility.type == "Parking"
+            else provider_config.trail_pass_limit
+        )
+        over_limit = [item for item in matching if item.max_reservable > pass_limit]
+        if over_limit:
+            raise BCParksParseError(
+                "Reservation response exceeds the configured pass limit for "
+                f"{facility.type.lower()} facilities"
             )
 
         opportunities = []

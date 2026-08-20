@@ -59,6 +59,62 @@ class MockSiteTestCase(unittest.TestCase):
         self.assertEqual(midday["capacity"], 0)
         self.assertFalse(state["behavior"]["malformed"])
 
+    def test_welcomebc_page_has_provider_shaped_draw_markup(self):
+        response = self.client.get("/welcomebc/invitations-to-apply")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('id="Skills_Immigration_invitations"', html)
+        self.assertIn("Number of invitations", html)
+        self.assertIn('rowspan="2"', html)
+        self.assertIn("Innovate: High Economic Impact", html)
+        self.assertIn("Care: Health", html)
+        self.assertIn("April 22, 2026", html)
+
+    def test_welcomebc_control_publishes_draw_and_reset_removes_it(self):
+        response = self.client.post("/__control/welcomebc/publish")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["draws"][0]["date"], "August 13, 2026")
+        page = self.client.get("/welcomebc/invitations-to-apply").get_data(as_text=True)
+        self.assertIn("August 13, 2026", page)
+
+        repeated = self.client.post("/__control/welcomebc/publish").get_json()
+        self.assertEqual(
+            [draw["date"] for draw in repeated["draws"]].count("August 13, 2026"),
+            1,
+        )
+
+        self.client.post("/__control/reset")
+        reset_page = self.client.get("/welcomebc/invitations-to-apply").get_data(
+            as_text=True
+        )
+        self.assertNotIn("August 13, 2026", reset_page)
+
+    def test_welcomebc_behavior_can_simulate_malformed_page_and_error(self):
+        self.client.patch("/__control/welcomebc/behavior", json={"malformed": True})
+        malformed = self.client.get("/welcomebc/invitations-to-apply")
+        self.assertEqual(malformed.status_code, 200)
+        self.assertNotIn(
+            'id="Skills_Immigration_invitations"', malformed.get_data(as_text=True)
+        )
+
+        self.client.patch(
+            "/__control/welcomebc/behavior",
+            json={"malformed": False, "status_code": 503},
+        )
+        self.assertEqual(
+            self.client.get("/welcomebc/invitations-to-apply").status_code, 503
+        )
+
+    def test_welcomebc_behavior_accepts_bounded_delay(self):
+        response = self.client.patch(
+            "/__control/welcomebc/behavior", json={"delay_seconds": 0.01}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["delay_seconds"], 0.01)
+
     def test_behavior_can_simulate_malformed_page(self):
         self.client.patch("/__control/behavior", json={"malformed": True})
         response = self.client.get("/reservations/2026-08-22")
@@ -225,6 +281,29 @@ class MockSiteTestCase(unittest.TestCase):
         self.assertEqual(response.content_type, "application/json")
         self.assertEqual(response.get_data(as_text=True), "{malformed")
 
+    def test_bcparks_controls_simulate_facility_closure_delay_and_error(self):
+        response = self.client.patch(
+            "/__control/bcparks/facilities/0008/Gold Creek Parking Lot",
+            json={"status": "closed", "visible": False},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"]["state"], "closed")
+        self.assertFalse(response.get_json()["visible"])
+
+        response = self.client.patch(
+            "/__control/bcparks/behavior", json={"delay_seconds": 0.01}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["delay_seconds"], 0.01)
+        self.assertEqual(self.client.get("/bcparks/api/park").status_code, 200)
+
+        response = self.client.patch(
+            "/__control/bcparks/behavior",
+            json={"delay_seconds": 0, "status_code": 503},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/bcparks/api/park").status_code, 503)
+
     def test_bcparks_empty_response_control_preserves_endpoint_shape(self):
         self.client.patch("/__control/bcparks/behavior", json={"empty": True})
 
@@ -262,6 +341,9 @@ class MockSiteControlsDisabledTestCase(unittest.TestCase):
         self.assertEqual(app.test_client().get("/__control/state").status_code, 404)
         self.assertEqual(
             app.test_client().get("/__control/bcparks/state").status_code, 404
+        )
+        self.assertEqual(
+            app.test_client().get("/__control/welcomebc/state").status_code, 404
         )
 
 

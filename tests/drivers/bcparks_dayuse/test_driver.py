@@ -140,6 +140,42 @@ def test_empty_reservation_response_fails(fixture_json):
         run_check(driver)
 
 
+def test_missing_reservation_date_fails(fixture_json):
+    def remove_date(responses):
+        del responses["/api/reservation"]["2026-08-16"]
+
+    driver = BCParksDayUseDriver(
+        transport=make_transport(fixture_json, mutate=remove_date)
+    )
+
+    with pytest.raises(BCParksParseError, match="missing 2026-08-16"):
+        run_check(driver)
+
+
+def test_missing_selected_slot_fails(fixture_json):
+    def remove_slot(responses):
+        del responses["/api/reservation"]["2026-08-16"]["AM"]
+
+    driver = BCParksDayUseDriver(
+        transport=make_transport(fixture_json, mutate=remove_slot)
+    )
+
+    with pytest.raises(BCParksParseError, match=r"missing slot 'AM'.*2026-08-16"):
+        run_check(driver)
+
+
+def test_reservable_max_cannot_exceed_provider_pass_limit(fixture_json):
+    def exceed_limit(responses):
+        responses["/api/reservation"]["2026-08-17"]["AM"]["max"] = 2
+
+    driver = BCParksDayUseDriver(
+        transport=make_transport(fixture_json, mutate=exceed_limit)
+    )
+
+    with pytest.raises(BCParksParseError, match="configured pass limit"):
+        run_check(driver)
+
+
 def test_non_json_response_is_rejected():
     driver = BCParksDayUseDriver(
         transport=httpx.MockTransport(

@@ -1,5 +1,8 @@
 # Local VM deployment runbook
 
+For the rationale, current price comparison, and migration triggers, see
+[Hosting options](hosting-options.md).
+
 The local VM hosts two isolated Docker Compose projects. They share only the
 Docker daemon:
 
@@ -66,9 +69,25 @@ sudo install -m 0600 -o web-checker-deploy -g web-checker-deploy /dev/null \
 ```
 
 Replace `web-checker-deploy` if the dedicated runner account has a different
-name. Job configuration must not contain secret values. Put any future
-provider or notifier environment values in `worker.env`, one `NAME=value` per
-line. The current drivers do not require secrets.
+name. Job configuration must not contain secret values. Put provider or notifier
+environment values in `worker.env`, one `NAME=value` per line. The current
+drivers do not require secrets. An enabled job using the `email` channel requires
+`WEB_CHECKER_SMTP_HOST`, `WEB_CHECKER_SMTP_FROM`, and `WEB_CHECKER_SMTP_TO`.
+Production SMTP commonly also requires `WEB_CHECKER_SMTP_USERNAME` and
+`WEB_CHECKER_SMTP_PASSWORD`; both must be set together.
+
+`WEB_CHECKER_SMTP_SECURITY` accepts `starttls` (the default), `implicit-tls`, or
+`none`, with optional `WEB_CHECKER_SMTP_PORT` and
+`WEB_CHECKER_SMTP_TIMEOUT_SECONDS`. Use `none` only for trusted local capture.
+Keep the environment file mode `0600`. Validate it without printing resolved
+values:
+
+```console
+WEB_CHECKER_IMAGE=web-checker-production:validation \
+  WEB_CHECKER_PRODUCTION_CONFIG_PATH=/etc/web-checker-production/jobs.yaml \
+  WEB_CHECKER_PRODUCTION_ENV_PATH=/etc/web-checker-production/worker.env \
+  docker compose --file compose.production.yaml config --quiet
+```
 
 Create a GitHub Environment named `production` and restrict it to protected
 branches. Pull-request approval remains the human production approval gate; the

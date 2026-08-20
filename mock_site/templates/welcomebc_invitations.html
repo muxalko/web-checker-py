@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en-CA">
+  <head>
+    <meta charset="utf-8">
+    <title>Invitations to apply - Mock WelcomeBC</title>
+  </head>
+  <body>
+    <main>
+      <h1>Invitations to apply</h1>
+      <div class="accordion">
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="heading-Skills_Immigration_invitations">
+            <button type="button">Skills Immigration invitations</button>
+          </h2>
+          <div id="Skills_Immigration_invitations" class="accordion-collapse">
+            <div class="accordion-body">
+              <div class="fr-view">
+                <table>
+                  <tbody>
+                    <tr>
+                      <td>Date</td>
+                      <td>ITA type</td>
+                      <td>Selection factors</td>
+                      <td>Minimum score</td>
+                      <td>Number of invitations</td>
+                    </tr>
+                    {% for draw in draws %}
+                      {% for route in draw.routes %}
+                        <tr>
+                          {% if loop.first %}<td rowspan="{{ draw.routes|length }}">{{ draw.date }}</td>{% endif %}
+                          <td>Innovate: High Economic Impact</td>
+                          <td>{{ route.selection_factors }}</td>
+                          <td>{{ route.minimum_score }}</td>
+                          <td>{{ route.invitations }}</td>
+                        </tr>
+                      {% endfor %}
+                    {% endfor %}
+                    <tr>
+                      <td>July 9, 2026</td>
+                      <td>Care: Health</td>
+                      <td>All priority health care occupations</td>
+                      <td>96</td>
+                      <td>116</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <h3><strong>April 22, 2026</strong></h3>
+                <p>On April 22, 2026, the BC PNP issued invitations to apply to 484 candidates who will create high economic impact in B.C. Invitations were issued to candidates with:</p>
+                <ul>
+                  <li>A minimum wage of $62/hour and $125,000/year, and a job offer in NOC TEER 0, 1, 2 or 3 (252 candidates), or</li>
+                  <li>A minimum score of 138 points (232 candidates).</li>
+                </ul>
+                <p>Future high economic impact invitations may use different factors.</p>
+
+                <h3>Skills Immigration registration pool</h3>
+                <table>
+                  <thead><tr><th>Score range</th><th>Number of registrations</th></tr></thead>
+                  <tbody><tr><td>150+</td><td>10</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

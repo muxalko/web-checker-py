@@ -6,13 +6,13 @@
 
 [![CI](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/muxalko/web-checker-py/actions/workflows/ci.yml)
 
-An extensible scheduled checker that detects registration and reservation
-opportunities and sends notifications when availability changes.
+An extensible scheduled checker that detects registration, reservation, and
+published-event opportunities and sends notifications when relevant changes
+occur.
 
 The checker core is provider-independent, with interchangeable drivers. The
-default development stack uses a controlled, production-shaped BC Parks mock;
-the BC Parks driver can be pointed at the real public read-only API only through
-explicit operator configuration.
+default development stack uses controlled provider-shaped mocks; real provider
+access is always an explicit operator configuration choice.
 
 See [DESIGN.md](DESIGN.md) for the product scope, architecture, engineering
 decisions, testing strategy, and delivery plan. It is the canonical record of
@@ -76,18 +76,20 @@ removed.
 ## Scheduled operation
 
 [`jobs.example.yaml`](jobs.example.yaml) defines a Golden Ears South Beach AM
-job using the production-shaped BC Parks mock. It runs immediately when the
-worker starts and every five minutes afterward. The default Compose file is
-exclusively the development test stack. It builds the current working tree,
-including uncommitted changes, under the fixed project name
+job using the production-shaped BC Parks mock, an enabled generic HTML mock job,
+and a disabled WelcomeBC example. Enabled jobs run immediately when the worker
+starts, then every five minutes for BC Parks and every 60 seconds for the generic
+mock. The default Compose file is exclusively the development test stack. It
+builds the current working tree, including uncommitted changes, under the fixed
+project name
 `web-checker-development`:
 
 ```console
 docker compose up --build
 ```
 
-Its containers are named `web-checker-development-checker-1` and
-`web-checker-development-mock-site-1`. The worker writes state to
+Its services include the checker, the mock provider, and a local Mailpit email
+capture server. The worker writes state to
 `/data/web-checker.db` in a development-only volume. Stop it with `Ctrl+C` or
 `docker compose down`; SIGINT and SIGTERM initiate a bounded graceful shutdown
 so an in-progress check can finish. `docker compose down --volumes` removes only
@@ -238,6 +240,81 @@ available. Notification intents are persisted with the transition, successful
 deliveries are deduplicated, and failed deliveries remain pending for retry on a
 later check.
 
+## WelcomeBC High Economic Impact draws
+
+The `welcomebc_high_impact` driver monitors the public
+[WelcomeBC Invitations to Apply page](https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply)
+for `Innovate: High Economic Impact` Skills Immigration draws. Multiple
+selection-factor rows under one date are grouped into one opportunity with a
+stable date-based ID. Historical draws establish the first baseline without an
+alert; a newly published date later produces one `appeared` transition.
+
+The example is disabled so the development stack and default tests never contact
+WelcomeBC. Copy it to the operator-owned production configuration, review the
+URL and interval, and explicitly enable it when ready. The hourly cadence makes
+24 requests per day and normally detects a publication within 60 minutes:
+
+```yaml
+- id: welcomebc-high-impact-itas
+  enabled: true
+  driver: welcomebc_high_impact
+  notify:
+    channels: [email]
+    on: [appeared]
+  schedule:
+    interval_seconds: 3600
+  config:
+    url: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+    timeout_seconds: 10
+    max_response_bytes: 1048576
+```
+
+The driver makes one anonymous, bounded HTTP GET per attempt and does not access
+BC PNP profiles or submit applications. Missing, empty, malformed, or changed
+provider structure fails the check and preserves the last successful baseline.
+The worker checks immediately on startup and then hourly. Its first successful
+response establishes the historical baseline without sending an email. The
+official page supplies a draw date rather than an exact publication time, so the
+checker does not claim a more precise issuance time.
+
+## Email notifications
+
+The `email` channel sends a plain provider-independent message containing only
+the existing opportunity title and source link. For example:
+
+```text
+BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)
+
+https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+```
+
+The adapter does not inspect the driver's provider-specific `attributes` JSON,
+and adding email does not change the notification model or SQLite schema. Set
+these environment variables before enabling a job that selects `email`:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `WEB_CHECKER_SMTP_HOST` | Yes | SMTP server hostname |
+| `WEB_CHECKER_SMTP_FROM` | Yes | Plain sender email address |
+| `WEB_CHECKER_SMTP_TO` | Yes | Comma-separated plain recipient addresses |
+| `WEB_CHECKER_SMTP_PORT` | No | Defaults to 587 for STARTTLS |
+| `WEB_CHECKER_SMTP_SECURITY` | No | `starttls` (default), `implicit-tls`, or `none` |
+| `WEB_CHECKER_SMTP_USERNAME` | No | Authentication username; requires password |
+| `WEB_CHECKER_SMTP_PASSWORD` | No | Authentication secret; requires username |
+| `WEB_CHECKER_SMTP_TIMEOUT_SECONDS` | No | Connection timeout; defaults to 10 seconds |
+
+Use `starttls` on port 587 or `implicit-tls` on port 465 according to the SMTP
+provider. The `none` mode is intended only for a trusted local capture server.
+Any partial or invalid SMTP configuration fails startup without printing the
+password. Credentials belong in the operator-owned production environment file,
+never in `jobs.yaml` or Git.
+
+Normal deliveries are deduplicated through the durable outbox. A failed SMTP
+send remains pending and is attempted after a later successful check. Delivery
+is at-least-once across a process crash, so the narrow interval after an SMTP
+server accepts a message but before SQLite records success can produce a
+duplicate.
+
 ## BC Parks day-use driver
 
 The `bcparks_dayuse` driver reads only the anonymous public configuration, park,
@@ -272,7 +349,7 @@ explicitly, conservatively, and never as part of the default test suite. The
 optional `app_version` field sends the public frontend's `X-App-Version` value
 when the provider requires it.
 
-## Mock reservation site
+## Mock providers
 
 The development provider reproduces the captured BC Parks API paths, identifiers,
 facility options, booking days, slots, configured capacities, rolling responses,
@@ -283,9 +360,15 @@ generic-driver regression tests. Start it with:
 docker compose up --build mock-site
 ```
 
-Then open `http://localhost:8080/bcparks/dayuse/`. The simple selection UI is for
-inspection only and cannot make a reservation. The Compose environment enables
-development-only controls for deterministic scenarios:
+Then open:
+
+- `http://localhost:8080/bcparks/dayuse/` for the BC Parks selection UI;
+- `http://localhost:8080/reservations/2026-08-22` for the generic provider; or
+- `http://localhost:8080/welcomebc/invitations-to-apply` for WelcomeBC.
+
+The BC Parks selection UI is for inspection only and cannot make a reservation.
+The Compose environment enables development-only controls for deterministic
+scenarios:
 
 ```console
 curl -X PATCH http://localhost:8080/__control/bcparks/reservations \
@@ -306,12 +389,7 @@ curl -X POST http://localhost:8080/__control/bcparks/reset
 The BC Parks behavior control also accepts `delay_seconds`, `malformed`, and
 `empty`. Moving the mock clock to another provider-local date rolls the three-day
 reservation window with it. Park and facility controls can simulate closures or
-hidden entries.
-All control routes return HTTP 404 unless
-`MOCK_SITE_CONTROLS_ENABLED=true`.
-
-The original generic HTML scenario remains available at
-`http://localhost:8080/reservations/2026-08-22` with its existing controls:
+hidden entries. The generic and WelcomeBC controls are available as well:
 
 ```console
 curl -X PATCH http://localhost:8080/__control/opportunities/midday-pass \
@@ -322,10 +400,20 @@ curl -X PATCH http://localhost:8080/__control/behavior \
   -H 'Content-Type: application/json' \
   -d '{"status_code":503}'
 
+curl -X POST http://localhost:8080/__control/welcomebc/publish
+
+curl -X PATCH http://localhost:8080/__control/welcomebc/behavior \
+  -H 'Content-Type: application/json' \
+  -d '{"malformed":true}'
+
 curl -X POST http://localhost:8080/__control/reset
 ```
 
-Set an opportunity's `enabled` field to `false` to simulate its disappearance.
+Publishing the mock WelcomeBC draw is idempotent; reset removes it and restores
+all default behavior. Set a reservation opportunity's `enabled` field to `false`
+to simulate its disappearance. The provider controls can simulate delay,
+malformed content, or an HTTP error. All control routes return HTTP 404 unless
+`MOCK_SITE_CONTROLS_ENABLED=true`.
 If port 8080 is already occupied, set another host port, for example
 `MOCK_SITE_PORT=18080 docker compose up mock-site`.
 
@@ -334,6 +422,24 @@ Run the complete test suite inside the project image with:
 ```console
 docker compose run --rm --no-deps checker pytest
 ```
+
+Mailpit captures development email without sending anything externally. Its UI
+is available at `http://localhost:8025` after `docker compose up`. Run the
+opt-in end-to-end scenario—which establishes a mock WelcomeBC baseline,
+publishes one draw, captures one email, and verifies no duplicate—with:
+
+```console
+docker compose up --build --detach mailpit
+docker compose run --rm \
+  -e WEB_CHECKER_TEST_SMTP_HOST=mailpit \
+  -e WEB_CHECKER_TEST_MAILPIT_API=http://mailpit:8025 \
+  mock-site pytest -q \
+  tests/drivers/welcomebc_high_impact/test_email_mailpit_integration.py
+```
+
+If ports 1025 or 8025 are occupied, set `MAILPIT_SMTP_PORT` or
+`MAILPIT_HTTP_PORT`; communication between the containers continues to use the
+fixed internal ports.
 
 ## Production deployment
 

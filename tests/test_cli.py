@@ -6,6 +6,7 @@ import httpx
 from web_checker.cli import main
 from web_checker.drivers.generic_html.driver import GenericHtmlDriver
 from web_checker.drivers.registry import DriverRegistry
+from web_checker.notifications.email import SMTP_ENVIRONMENT_FIELDS
 
 
 def write_job_config(
@@ -108,6 +109,21 @@ def test_validate_config_validates_driver_specific_rules(tmp_path, fixture_html)
     assert stderr == ""
 
 
+def test_example_configuration_validates_with_shipped_integrations():
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["--config", "jobs.example.yaml", "validate-config"],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == "Configuration valid: 3 job(s)\n"
+    assert stderr.getvalue() == ""
+
+
 def test_check_prints_normalized_opportunities(tmp_path, fixture_html):
     path = write_job_config(tmp_path)
 
@@ -151,6 +167,68 @@ def test_unknown_driver_returns_clean_error(tmp_path, fixture_html):
     assert exit_code == 1
     assert stdout == ""
     assert "Unknown driver 'missing'" in stderr
+
+
+def test_disabled_job_may_reference_an_unconfigured_notification_channel(
+    tmp_path, fixture_html
+):
+    path = write_job_config(tmp_path, enabled=False, notifications=True)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "channels: [console]", "channels: [email]"
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, stdout, stderr = invoke(
+        arguments(path, "validate-config"),
+        mock_registry(fixture_html),
+    )
+
+    assert exit_code == 0
+    assert stdout == "Configuration valid: 1 job(s)\n"
+    assert stderr == ""
+
+
+def test_enabled_job_rejects_an_unconfigured_notification_channel(
+    tmp_path, fixture_html
+):
+    path = write_job_config(tmp_path, notifications=True)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "channels: [console]", "channels: [email]"
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, stdout, stderr = invoke(
+        arguments(path, "validate-config"),
+        mock_registry(fixture_html),
+    )
+
+    assert exit_code == 1
+    assert stdout == ""
+    assert "Unknown notification channel 'email'" in stderr
+
+
+def test_partial_smtp_environment_returns_a_clean_error(
+    tmp_path, fixture_html, monkeypatch
+):
+    for name in SMTP_ENVIRONMENT_FIELDS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("WEB_CHECKER_SMTP_HOST", "smtp.example.test")
+    path = write_job_config(tmp_path)
+
+    exit_code, stdout, stderr = invoke(
+        arguments(path, "validate-config"),
+        mock_registry(fixture_html),
+    )
+
+    assert exit_code == 1
+    assert stdout == ""
+    assert "incomplete SMTP configuration" in stderr
+    assert "WEB_CHECKER_SMTP_FROM" in stderr
+    assert "WEB_CHECKER_SMTP_TO" in stderr
 
 
 def test_driver_failure_returns_clean_error(tmp_path, fixture_html):

@@ -1,4 +1,4 @@
-"""A deterministic mock reservation website with development-only controls."""
+"""Deterministic mock providers with development-only controls."""
 
 import os
 import threading
@@ -39,6 +39,44 @@ DEFAULT_OPPORTUNITIES = (
 )
 
 VALID_AVAILABILITY = {"available", "sold-out", "unknown"}
+
+DEFAULT_WELCOMEBC_DRAWS = (
+    {
+        "date": "July 16, 2026",
+        "routes": (
+            {
+                "selection_factors": (
+                    "Minimum wage of $58/hour and $115,000/year, and NOC 0, 1, 2, or 3"
+                ),
+                "minimum_score": "N/A",
+                "invitations": "223",
+            },
+            {
+                "selection_factors": "Points",
+                "minimum_score": "132",
+                "invitations": "346",
+            },
+        ),
+    },
+)
+
+WELCOMEBC_NEW_DRAW = {
+    "date": "August 13, 2026",
+    "routes": (
+        {
+            "selection_factors": (
+                "Minimum wage of $60/hour and $120,000/year, and NOC 0, 1, 2, or 3"
+            ),
+            "minimum_score": "N/A",
+            "invitations": "200",
+        },
+        {
+            "selection_factors": "Points",
+            "minimum_score": "134",
+            "invitations": "250",
+        },
+    ),
+}
 
 
 class MockReservationState:
@@ -95,6 +133,50 @@ class MockReservationState:
             }
 
 
+class MockWelcomeBCState:
+    """Thread-safe state for the provider-shaped WelcomeBC page."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self._lock:
+            self._draws = deepcopy(list(DEFAULT_WELCOMEBC_DRAWS))
+            self._behavior = {
+                "delay_seconds": 0.0,
+                "status_code": 200,
+                "malformed": False,
+            }
+
+    def snapshot(self):
+        with self._lock:
+            return deepcopy(self._draws), deepcopy(self._behavior)
+
+    def publish_draw(self):
+        with self._lock:
+            if not any(
+                draw["date"] == WELCOMEBC_NEW_DRAW["date"] for draw in self._draws
+            ):
+                self._draws.insert(0, deepcopy(WELCOMEBC_NEW_DRAW))
+            return self.control_snapshot_unlocked()
+
+    def update_behavior(self, changes):
+        with self._lock:
+            self._behavior.update(changes)
+            return deepcopy(self._behavior)
+
+    def control_snapshot(self):
+        with self._lock:
+            return self.control_snapshot_unlocked()
+
+    def control_snapshot_unlocked(self):
+        return {
+            "draws": deepcopy(self._draws),
+            "behavior": deepcopy(self._behavior),
+        }
+
+
 def _controls_enabled(app):
     return app.config["MOCK_SITE_CONTROLS_ENABLED"]
 
@@ -111,6 +193,31 @@ def _json_object():
     return body
 
 
+def _validate_behavior_update(body):
+    allowed = {"delay_seconds", "status_code", "malformed"}
+    unexpected = set(body) - allowed
+    if unexpected:
+        abort(
+            400,
+            description="Unsupported fields: {}".format(", ".join(sorted(unexpected))),
+        )
+    if "delay_seconds" in body and (
+        not isinstance(body["delay_seconds"], (int, float))
+        or isinstance(body["delay_seconds"], bool)
+        or not 0 <= body["delay_seconds"] <= 10
+    ):
+        abort(400, description="Delay must be between 0 and 10 seconds")
+    if "status_code" in body and (
+        not isinstance(body["status_code"], int)
+        or isinstance(body["status_code"], bool)
+        or body["status_code"] < 200
+        or body["status_code"] > 599
+    ):
+        abort(400, description="Status code must be between 200 and 599")
+    if "malformed" in body and not isinstance(body["malformed"], bool):
+        abort(400, description="Malformed must be a boolean")
+
+
 def create_app(config=None):
     app = Flask(__name__)
     app.config.from_mapping(
@@ -122,7 +229,9 @@ def create_app(config=None):
         app.config.update(config)
 
     state = MockReservationState()
+    welcomebc_state = MockWelcomeBCState()
     app.extensions["mock_reservation_state"] = state
+    app.extensions["mock_welcomebc_state"] = welcomebc_state
     register_bcparks_mock(
         app,
         require_controls=_require_controls,
@@ -165,6 +274,17 @@ def create_app(config=None):
             opportunities=opportunities,
         )
 
+    @app.get("/welcomebc/invitations-to-apply")
+    def welcomebc_invitations():
+        draws, behavior = welcomebc_state.snapshot()
+        if behavior["delay_seconds"]:
+            time.sleep(behavior["delay_seconds"])
+        if behavior["status_code"] != 200:
+            abort(behavior["status_code"])
+        if behavior["malformed"]:
+            return render_template("welcomebc_malformed.html")
+        return render_template("welcomebc_invitations.html", draws=draws)
+
     @app.get("/__control/state")
     def control_state():
         _require_controls(app)
@@ -174,6 +294,7 @@ def create_app(config=None):
     def control_reset():
         _require_controls(app)
         state.reset()
+        welcomebc_state.reset()
         return jsonify(state.control_snapshot())
 
     @app.patch("/__control/opportunities/<key>")
@@ -212,30 +333,25 @@ def create_app(config=None):
     def control_behavior():
         _require_controls(app)
         body = _json_object()
-        allowed = {"delay_seconds", "status_code", "malformed"}
-        unexpected = set(body) - allowed
-        if unexpected:
-            abort(
-                400,
-                description="Unsupported fields: {}".format(
-                    ", ".join(sorted(unexpected))
-                ),
-            )
-        if "delay_seconds" in body and (
-            not isinstance(body["delay_seconds"], (int, float))
-            or isinstance(body["delay_seconds"], bool)
-            or not 0 <= body["delay_seconds"] <= 10
-        ):
-            abort(400, description="Delay must be between 0 and 10 seconds")
-        if "status_code" in body and (
-            not isinstance(body["status_code"], int)
-            or body["status_code"] < 200
-            or body["status_code"] > 599
-        ):
-            abort(400, description="Status code must be between 200 and 599")
-        if "malformed" in body and not isinstance(body["malformed"], bool):
-            abort(400, description="Malformed must be a boolean")
+        _validate_behavior_update(body)
         return jsonify(state.update_behavior(body))
+
+    @app.get("/__control/welcomebc/state")
+    def control_welcomebc_state():
+        _require_controls(app)
+        return jsonify(welcomebc_state.control_snapshot())
+
+    @app.post("/__control/welcomebc/publish")
+    def control_welcomebc_publish():
+        _require_controls(app)
+        return jsonify(welcomebc_state.publish_draw())
+
+    @app.patch("/__control/welcomebc/behavior")
+    def control_welcomebc_behavior():
+        _require_controls(app)
+        body = _json_object()
+        _validate_behavior_update(body)
+        return jsonify(welcomebc_state.update_behavior(body))
 
     return app
 

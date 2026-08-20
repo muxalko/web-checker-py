@@ -45,5 +45,10 @@ def create_default_registry() -> DriverRegistry:
     """Build the registry of drivers shipped with this application."""
     from web_checker.drivers.bcparks_dayuse.driver import BCParksDayUseDriver
     from web_checker.drivers.generic_html.driver import GenericHtmlDriver
+    from web_checker.drivers.welcomebc_high_impact.driver import (
+        WelcomeBCHighImpactDriver,
+    )
 
-    return DriverRegistry([BCParksDayUseDriver(), GenericHtmlDriver()])
+    return DriverRegistry(
+        [BCParksDayUseDriver(), GenericHtmlDriver(), WelcomeBCHighImpactDriver()]
+    )
