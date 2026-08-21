@@ -1,0 +1,40 @@
+name: Close linked issues
+
+on:
+  pull_request:
+    branches:
+      - development
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Previously merged development PR to backfill
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issues:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out development
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: development
+          persist-credentials: false
+
+      - name: Close every linked issue
+        run: python scripts/close_linked_issues.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}

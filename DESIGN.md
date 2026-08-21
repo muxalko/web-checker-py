@@ -711,6 +711,21 @@ increase execution time.
 - Add a real notification channel. **Implemented with generic SMTP email, an
   environment-backed registry, and a provider-shaped Mailpit acceptance test.**
 
+### Milestones 6–8: operational maturity and ergonomics
+
+The prioritized future delivery plan is maintained in
+[`docs/ROADMAP.md`](docs/ROADMAP.md) with one GitHub issue per deliverable:
+
+- **Milestone 6: Operational resilience** — bounded retention and tested
+  backups, followed by status reporting and repeated-failure alerts.
+- **Milestone 7: Notification experience** — grouped provider-independent
+  digest delivery without weakening outbox guarantees.
+- **Milestone 8: Configuration and provider ergonomics** — read-only provider
+  discovery, deterministic job matrices, and timezone-aware adaptive polling.
+
+The roadmap records sequencing and completion gates. Any architectural decision
+made while implementing a roadmap issue remains recorded in this document.
+
 ## Recorded decisions
 
 ### D-001: Retain the repository and redesign in place
@@ -886,8 +901,8 @@ Every code, documentation, tooling, or configuration change begins with an open
 GitHub issue that defines its outcome and acceptance criteria. A working branch
 is then created from current `development` and named
 `type/<issue-number>-description`. The pull request targets `development` and
-uses a supported GitHub closing keyword for the same issue number so the issue
-closes only when the change merges.
+uses a supported GitHub closing keyword for the same issue number. Additional
+issues fully completed by the pull request use additional closing references.
 
 A read-only GitHub Actions job validates the base branch, branch name, closing
 reference, issue type, and open state through the GitHub API. Its unique
@@ -896,6 +911,15 @@ quality gates and owner approval. Read-only investigation does not require an
 issue because it does not change repository state. GitHub cannot guarantee that
 an issue remains open after a successful check without another event, so owner
 review also confirms it is still open immediately before merge.
+
+GitHub's native closing keywords close issues only when a pull request reaches
+the repository's default branch, while this repository deliberately integrates
+through `development`. A separate least-privilege workflow therefore runs only
+for merged pull requests targeting `development`, parses every supported closing
+reference, ignores pull-request references and already-closed issues, and closes
+each remaining issue as completed. Unmerged pull requests and other base branches
+cannot trigger closure. Roadmap milestone creation and assignment likewise use a
+separate idempotent workflow with only `contents: read` and `issues: write`.
 
 ### D-019: Isolate local testing from post-merge production deployment
 

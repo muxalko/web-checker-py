@@ -10,7 +10,9 @@
   `agent/123-add-provider`.
 - Merge changes only through a pull request targeting `development`. The pull
   request body must contain `Closes #<issue-number>` matching the branch, and the
-  issue must remain open until the pull request is merged.
+  issue must remain open until the pull request is merged. Every additional
+  issue completed by the same pull request must also use a supported closing
+  reference; the post-merge workflow closes all referenced open issues.
 - Use the `muxalko-web-checker-codex` GitHub App identity for every GitHub write
   performed by an agent, including creating issues or pull requests and pushing
   branches. Authenticate with a short-lived installation token generated from
