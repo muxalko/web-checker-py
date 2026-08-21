@@ -86,6 +86,7 @@ def test_open_inventory_becomes_available_at_opening_time(fixture_json):
     result = run_check(driver)
 
     assert result.opportunities[-1].availability is Availability.AVAILABLE
+    assert result.opportunities[-1].attributes["capacity"] == "Moderate"
     assert result.opportunities[-1].starts_at.isoformat() == "2026-08-17T07:00:00-07:00"
 
 
@@ -111,9 +112,28 @@ def test_sends_only_anonymous_gets_and_optional_app_version(fixture_json):
     assert all(
         request.headers["X-App-Version"] == "captured-version" for request in observed
     )
+    assert all(request.headers["Origin"] == BASE_URL for request in observed)
     assert all("authorization" not in request.headers for request in observed)
     assert observed[-1].url.params["park"] == "0008"
     assert observed[-1].url.params["facility"] == FACILITY
+
+
+def test_origin_preserves_non_default_base_url_port(fixture_json):
+    observed = []
+    base = make_transport(fixture_json)
+
+    async def handler(request):
+        observed.append(request)
+        return await base.handle_async_request(request)
+
+    driver = BCParksDayUseDriver(transport=httpx.MockTransport(handler))
+
+    run_check(driver, make_config(base_url="https://provider.test:8443"))
+
+    assert all(
+        request.headers["Origin"] == "https://provider.test:8443"
+        for request in observed
+    )
 
 
 def test_closed_park_fails_without_requesting_facilities(fixture_json):

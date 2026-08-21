@@ -50,6 +50,11 @@ class BCParksDayUseConfig:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES
 
+    @property
+    def origin(self) -> str:
+        parsed_url = urlsplit(self.base_url)
+        return f"{parsed_url.scheme}://{parsed_url.netloc}"
+
     def __post_init__(self) -> None:
         parsed_url = urlsplit(self.base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
@@ -124,6 +129,7 @@ class BCParksDayUseDriver:
         parsed = self._parse_config(config)
         headers = {
             "Accept": "application/json",
+            "Origin": parsed.origin,
             "User-Agent": DEFAULT_USER_AGENT,
         }
         if parsed.app_version is not None:
