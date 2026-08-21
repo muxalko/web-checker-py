@@ -26,6 +26,18 @@ class GovernanceError(ValueError):
     """Raised when a pull request violates repository governance."""
 
 
+def extract_closing_issue_numbers(body: str | None) -> tuple[int, ...]:
+    """Return unique closing issue references in numeric order."""
+    return tuple(
+        sorted(
+            {
+                int(match.group("issue"))
+                for match in CLOSING_REFERENCE_PATTERN.finditer(body or "")
+            }
+        )
+    )
+
+
 def validate_pull_request(
     event: Mapping[str, Any],
     issue_lookup: Callable[[int], Mapping[str, Any]],
@@ -54,10 +66,7 @@ def validate_pull_request(
     issue_number = int(branch_match.group("issue"))
 
     body = pull_request.get("body")
-    closing_issues = {
-        int(match.group("issue"))
-        for match in CLOSING_REFERENCE_PATTERN.finditer(body or "")
-    }
+    closing_issues = set(extract_closing_issue_numbers(body))
     if issue_number not in closing_issues:
         raise GovernanceError(f"pull request body must contain Closes #{issue_number}")
 

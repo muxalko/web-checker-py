@@ -16,7 +16,8 @@ access is always an explicit operator configuration choice.
 
 See [DESIGN.md](DESIGN.md) for the product scope, architecture, engineering
 decisions, testing strategy, and delivery plan. It is the canonical record of
-the project's technical design and should be updated as decisions change.
+the project's technical design and should be updated as decisions change. See
+[the roadmap](docs/ROADMAP.md) for prioritized future milestones and tasks.
 
 ## Contribution workflow
 
@@ -28,14 +29,16 @@ Every repository change follows the same auditable sequence:
    `type/<issue-number>-description`, such as `agent/123-add-provider`.
 3. Implement and verify the change on that branch.
 4. Open a pull request targeting `development` whose body contains
-   `Closes #<issue-number>` for the same open issue.
+   `Closes #<issue-number>` for the same open issue. Add a closing reference for
+   every other issue the pull request fully completes.
 5. Merge only after the `Change governance` and `Python quality gates` checks
    pass and the code owner approves the latest revision.
 
 The governance check rejects a mismatched branch or closing reference, a closed
 issue, a pull request number used in place of an issue, or a base branch other
-than `development`. The issue is closed automatically when its linked pull
-request merges.
+than `development`. After a successful merge, a write-scoped workflow closes
+every referenced open issue because GitHub's native closing behavior applies
+only when changes reach the default branch.
 
 ## Development
 
