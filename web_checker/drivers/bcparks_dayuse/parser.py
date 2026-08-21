@@ -17,7 +17,7 @@ KNOWN_PARK_STATES = {"open", "closed"}
 KNOWN_FACILITY_STATES = {"open", "closed"}
 KNOWN_FACILITY_TYPES = {"Parking", "Trail"}
 KNOWN_SLOTS = {"AM", "PM", "DAY"}
-KNOWN_CAPACITY_STATES = {"Full", "Low", "Medium", "High"}
+KNOWN_CAPACITY_STATES = {"Full", "Low", "Medium", "Moderate", "High"}
 
 
 def decode_json(body: bytes, *, source: str) -> Any:

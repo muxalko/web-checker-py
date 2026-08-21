@@ -355,11 +355,11 @@ credentials, form submission, authentication, or reservation behavior.
 
 Provider time is interpreted in `America/Vancouver`. Inventory is `unknown`
 until its booking opening time. After opening, `Full` with a zero maximum maps to
-`unavailable`, while the known positive `Low`, `Medium`, and `High` states map to
-`available`. Non-booking days also remain `unknown`. Empty or incomplete
-catalogs, missing dates or slots, unknown states, inconsistent capacity, and
-closed or hidden selections fail the check so the last good snapshot is not
-replaced by a false disappearance.
+`unavailable`, while the known positive `Low`, `Medium`, `Moderate`, and `High`
+states map to `available`. Non-booking days also remain `unknown`. Empty or
+incomplete catalogs, missing dates or slots, unknown states, inconsistent
+capacity, and closed or hidden selections fail the check so the last good
+snapshot is not replaced by a false disappearance.
 
 ### WelcomeBC High Economic Impact driver
 
@@ -960,6 +960,9 @@ reservation endpoints instead of automating the site's browser UI. The driver
 performs only bounded `GET` requests and keeps all protocol parsing, provider
 time, slot, capacity, and booking-window rules behind the driver contract. It
 does not authenticate, reserve, cancel, purchase, or send personal information.
+Requests include a same-origin `Origin` header derived from the configured base
+URL because the provider's reservation route otherwise serves its HTML frontend
+shell instead of the anonymous JSON representation.
 
 A configurable base URL and production-shaped local mock make fixture and mock
 testing the default. The mock covers the captured park/facility catalog and

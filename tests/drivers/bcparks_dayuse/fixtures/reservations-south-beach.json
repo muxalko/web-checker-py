@@ -8,7 +8,7 @@
     "PM": {"capacity": "Full", "max": 0}
   },
   "2026-08-17": {
-    "AM": {"capacity": "High", "max": 1},
+    "AM": {"capacity": "Moderate", "max": 1},
     "PM": {"capacity": "High", "max": 1}
   }
 }

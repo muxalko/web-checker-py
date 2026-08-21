@@ -336,18 +336,20 @@ config:
 
 BC Parks time is interpreted in `America/Vancouver`. Inventory returned before
 the facility's opening hour is recorded as `unknown`, not available. `Full`
-with a zero maximum is unavailable; the known `Low`, `Medium`, and `High`
-states with a positive maximum are available after opening. Empty responses,
-unknown capacity labels, inconsistent limits, missing dates or slots, and closed
-or hidden parks and facilities fail the check without replacing the last good
-snapshot.
+with a zero maximum is unavailable; the known `Low`, `Medium`, `Moderate`, and
+`High` states with a positive maximum are available after opening. Empty
+responses, unknown capacity labels, inconsistent limits, missing dates or slots,
+and closed or hidden parks and facilities fail the check without replacing the
+last good snapshot.
 
 The base URL is deliberately configurable so all development and automated
 tests use the local mock. A manual live validation requires a separate operator
 configuration with `base_url: https://reserve.bcparks.ca`; it must be run
 explicitly, conservatively, and never as part of the default test suite. The
 optional `app_version` field sends the public frontend's `X-App-Version` value
-when the provider requires it.
+when the provider requires it. Anonymous provider requests include an `Origin`
+header derived from the configured base URL because the live reservation route
+uses same-origin request context to select its JSON API behavior.
 
 ## Mock providers
 
