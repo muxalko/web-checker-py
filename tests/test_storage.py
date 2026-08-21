@@ -36,6 +36,45 @@ def test_first_success_creates_baseline_without_transitions(tmp_path):
     assert store.get_latest("job") == snapshot
 
 
+def test_first_available_success_can_create_deduplicated_notifications(tmp_path):
+    path = tmp_path / "state.db"
+    store = SQLiteObservationStore(path)
+    plan = NotificationPlan(
+        channels=("email",),
+        on=frozenset({TransitionType.INITIALLY_AVAILABLE}),
+    )
+    snapshot = result(opportunity("pass", Availability.AVAILABLE))
+
+    outcome = store.record_success("job", snapshot, plan)
+    store.record_success("job", result(*snapshot.opportunities, minute=1), plan)
+    reopened = SQLiteObservationStore(path)
+
+    assert outcome.baseline_created is True
+    assert [item.type for item in outcome.transitions] == [
+        TransitionType.INITIALLY_AVAILABLE
+    ]
+    assert [item.transition_type for item in reopened.list_pending_notifications()] == [
+        TransitionType.INITIALLY_AVAILABLE
+    ]
+
+
+def test_initial_available_transition_is_quiet_when_not_selected(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    plan = NotificationPlan(
+        channels=("email",),
+        on=frozenset({TransitionType.BECAME_AVAILABLE}),
+    )
+
+    outcome = store.record_success(
+        "job", result(opportunity("pass", Availability.AVAILABLE)), plan
+    )
+
+    assert [item.type for item in outcome.transitions] == [
+        TransitionType.INITIALLY_AVAILABLE
+    ]
+    assert store.list_pending_notifications() == ()
+
+
 def test_later_success_is_compared_and_survives_reopen(tmp_path):
     path = tmp_path / "state.db"
     store = SQLiteObservationStore(path)

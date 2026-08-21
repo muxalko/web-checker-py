@@ -14,6 +14,7 @@ class TransitionType(StrEnum):
     BECAME_AVAILABLE = "became_available"
     BECAME_UNAVAILABLE = "became_unavailable"
     AVAILABILITY_UNKNOWN = "availability_unknown"
+    INITIALLY_AVAILABLE = "initially_available"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,22 @@ def detect_transitions(
             )
 
     return tuple(transitions)
+
+
+def detect_initial_transitions(
+    current: CheckResult,
+) -> tuple[OpportunityTransition, ...]:
+    """Return available opportunities from a first complete snapshot."""
+    return tuple(
+        OpportunityTransition(
+            type=TransitionType.INITIALLY_AVAILABLE,
+            opportunity_id=opportunity.id,
+            previous=None,
+            current=opportunity,
+        )
+        for opportunity in current.opportunities
+        if opportunity.availability is Availability.AVAILABLE
+    )
 
 
 def _availability_transition(availability: Availability) -> TransitionType:

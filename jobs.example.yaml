@@ -6,6 +6,7 @@ jobs:
       channels:
         - console
       on:
+        - initially_available
         - became_available
     schedule:
       interval_seconds: 300

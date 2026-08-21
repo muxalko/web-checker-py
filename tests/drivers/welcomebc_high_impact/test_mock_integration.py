@@ -67,7 +67,10 @@ def test_published_draw_sends_exactly_one_appeared_notification(tmp_path):
     unchanged = asyncio.run(service.check(job))
 
     assert baseline.baseline_created is True
-    assert baseline.transitions == ()
+    assert {transition.type for transition in baseline.transitions} == {
+        TransitionType.INITIALLY_AVAILABLE
+    }
+    assert baseline.delivery.delivered == 0
     assert [transition.type for transition in changed.transitions] == [
         TransitionType.APPEARED
     ]
