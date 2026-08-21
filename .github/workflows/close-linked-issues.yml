@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Close every linked issue
-        run: python scripts/close_linked_issues.py
+        run: python -m scripts.close_linked_issues
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
