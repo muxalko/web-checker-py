@@ -34,5 +34,28 @@ services:
       retries: 6
       start_period: 5s
 
+  maintenance:
+    image: ${WEB_CHECKER_IMAGE:?Set WEB_CHECKER_IMAGE to the validated production image}
+    command:
+      - web-checker
+      - --database
+      - /data/web-checker.db
+      - maintenance
+      - --backup-directory
+      - /backups
+      - --observation-days
+      - ${WEB_CHECKER_OBSERVATION_RETENTION_DAYS:-90}
+      - --notification-days
+      - ${WEB_CHECKER_NOTIFICATION_RETENTION_DAYS:-30}
+      - --retain-backups
+      - ${WEB_CHECKER_BACKUP_RETENTION_COUNT:-14}
+      - --interval-seconds
+      - ${WEB_CHECKER_MAINTENANCE_INTERVAL_SECONDS:-86400}
+    restart: unless-stopped
+    volumes:
+      - checker-data:/data
+      - checker-backups:/backups
+
 volumes:
   checker-data:
+  checker-backups:

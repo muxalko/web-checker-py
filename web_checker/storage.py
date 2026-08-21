@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,20 @@ from web_checker.core.transitions import (
 from web_checker.notifications.models import NotificationPlan, PendingNotification
 
 SCHEMA_VERSION = 2
+
+
+@dataclass(frozen=True)
+class RetentionResult:
+    check_runs_deleted: int
+    completed_notifications_deleted: int
+
+
+@dataclass(frozen=True)
+class StorageStatus:
+    database_bytes: int
+    oldest_observation: datetime | None
+    check_runs: int
+    pending_notifications: int
 
 
 class StorageError(Exception):
@@ -140,6 +155,66 @@ class SQLiteObservationStore:
             raise StorageError(
                 f"could not read latest check for job {job_id!r}: {error}"
             ) from error
+        finally:
+            connection.close()
+
+    def prune(
+        self, *, observations_before: datetime, notifications_before: datetime
+    ) -> RetentionResult:
+        """Delete expired history without losing baselines or pending deliveries."""
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            completed = connection.execute(
+                """
+                DELETE FROM notification_outbox
+                WHERE delivered_at IS NOT NULL AND delivered_at < ?
+                """,
+                (notifications_before.isoformat(),),
+            ).rowcount
+            runs = connection.execute(
+                """
+                DELETE FROM check_runs
+                WHERE checked_at < ?
+                  AND id NOT IN (SELECT MAX(id) FROM check_runs GROUP BY job_id)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM transitions t
+                      JOIN notification_outbox n ON n.transition_id = t.id
+                      WHERE t.run_id = check_runs.id AND n.delivered_at IS NULL
+                  )
+                """,
+                (observations_before.isoformat(),),
+            ).rowcount
+            connection.commit()
+            return RetentionResult(runs, completed)
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise StorageError(f"could not prune database history: {error}") from error
+        finally:
+            connection.close()
+
+    def status(self) -> StorageStatus:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS check_runs, MIN(checked_at) AS oldest_observation,
+                       (SELECT COUNT(*) FROM notification_outbox
+                        WHERE delivered_at IS NULL) AS pending_notifications
+                FROM check_runs
+                """
+            ).fetchone()
+            return StorageStatus(
+                database_bytes=self.path.stat().st_size,
+                oldest_observation=datetime.fromisoformat(row["oldest_observation"])
+                if row["oldest_observation"] is not None
+                else None,
+                check_runs=row["check_runs"],
+                pending_notifications=row["pending_notifications"],
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            raise StorageError(f"could not inspect database status: {error}") from error
         finally:
             connection.close()
 

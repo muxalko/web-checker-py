@@ -207,6 +207,19 @@ commit. A serialization or database failure rolls back the entire check. Driver
 failures never reach the store, so the latest successful snapshot remains the
 comparison baseline.
 
+Production bounds historical growth with a separate maintenance process. Each
+cycle first creates and integrity-checks a consistent SQLite online backup, then
+deletes expired completed-notification records and observation runs in one
+transaction. Retention never deletes the newest successful run for any job or a
+run referenced by an undelivered outbox item. Observation history and completed
+notification delivery records have independent age thresholds.
+
+Backups live in a volume separate from live state and are bounded by count. The
+maintenance completion event and `status` command expose database size, run
+count, oldest retained observation, pending deliveries, and last successful
+backup metadata. Restore validation performs an SQLite integrity check using
+only local files.
+
 ### Transition detection
 
 The transition detector compares a driver's current normalized results with the
@@ -508,10 +521,14 @@ web-checker validate-config
 web-checker check <job-id>
 web-checker check-all
 web-checker worker
+web-checker maintenance --backup-directory <directory>
+web-checker status --backup-directory <directory>
+web-checker validate-restore <database>
 ```
 
 `check` and `check-all` perform one-shot operations. `worker` runs the scheduler.
-All modes use the same application services.
+`maintenance` performs backup-before-retention cycles independently of checking;
+`status` and `validate-restore` are operational inspection commands.
 
 The local Docker Compose environment is expected to contain:
 

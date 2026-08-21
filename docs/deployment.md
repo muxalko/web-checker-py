@@ -113,6 +113,17 @@ A host file lock in
 deployment without cancelling an active or waiting revision. Docker health must
 become `healthy` within 120 seconds. Production state remains in the
 `web-checker-production_checker-data` volume across image changes and rollback.
+The independently restarted `maintenance` service takes an online backup before
+each retention pass. Backups use the separate
+`web-checker-production_checker-backups` volume.
+
+Defaults are a daily cycle, 90 days of observations, 30 days of completed
+notification records, and 14 backups. Override them with
+`WEB_CHECKER_MAINTENANCE_INTERVAL_SECONDS`,
+`WEB_CHECKER_OBSERVATION_RETENTION_DAYS`,
+`WEB_CHECKER_NOTIFICATION_RETENTION_DAYS`, and
+`WEB_CHECKER_BACKUP_RETENTION_COUNT`. Pending deliveries and each job's latest
+baseline are always retained.
 
 ## Inspection
 
@@ -126,10 +137,31 @@ export WEB_CHECKER_PRODUCTION_CONFIG_PATH=/etc/web-checker-production/jobs.yaml
 export WEB_CHECKER_PRODUCTION_ENV_PATH=/etc/web-checker-production/worker.env
 docker compose --file compose.production.yaml ps
 docker compose --file compose.production.yaml logs --tail=100 checker
+docker compose --file compose.production.yaml logs --tail=20 maintenance
+docker compose --file compose.production.yaml run --rm maintenance \
+  web-checker --database /data/web-checker.db status \
+  --backup-directory /backups
 ```
 
 Do not run `docker compose config` without `--quiet` on the production host;
 resolved environment values can otherwise be printed.
+
+## Backup restore drill
+
+Run this read-only drill after first deployment and after storage changes:
+
+```console
+docker run --rm \
+  -v web-checker-production_checker-backups:/backups:ro \
+  -v web-checker-restore-test:/restore \
+  web-checker-production:<validated-sha> \
+  sh -c 'cp "$(ls -1t /backups/web-checker-*.db | head -1)" /restore/restored.db && web-checker validate-restore /restore/restored.db'
+docker volume rm web-checker-restore-test
+```
+
+For actual recovery, stop both production services, preserve the damaged
+database, copy a validated backup to `/data/web-checker.db` in the data volume,
+then restart the stack and inspect both service logs.
 
 ## Failure recovery and rollback
 

@@ -209,3 +209,54 @@ def test_version_one_database_is_migrated(tmp_path):
     store = SQLiteObservationStore(path)
 
     assert store.list_pending_notifications() == ()
+
+
+def test_prune_preserves_latest_baseline_and_pending_delivery(tmp_path):
+    path = tmp_path / "state.db"
+    store = SQLiteObservationStore(path)
+    plan = NotificationPlan(
+        channels=("console",), on=frozenset({TransitionType.BECAME_AVAILABLE})
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.UNAVAILABLE)), plan
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.AVAILABLE), minute=1), plan
+    )
+    latest = result(opportunity("pass", Availability.AVAILABLE), minute=2)
+    store.record_success("job", latest, plan)
+
+    outcome = store.prune(
+        observations_before=datetime(2027, 1, 1, tzinfo=UTC),
+        notifications_before=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+
+    assert outcome.check_runs_deleted == 1
+    assert len(store.list_pending_notifications()) == 1
+    assert store.get_latest("job") == latest
+    assert store.status().check_runs == 2
+
+
+def test_prune_removes_expired_completed_notifications(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    plan = NotificationPlan(
+        channels=("console",), on=frozenset({TransitionType.BECAME_AVAILABLE})
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.UNAVAILABLE)), plan
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.AVAILABLE), minute=1), plan
+    )
+    pending = store.list_pending_notifications()[0]
+    store.mark_notification_delivered(
+        pending.id, datetime(2026, 8, 10, 12, 2, tzinfo=UTC)
+    )
+
+    outcome = store.prune(
+        observations_before=datetime(2026, 1, 1, tzinfo=UTC),
+        notifications_before=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+
+    assert outcome.completed_notifications_deleted == 1
+    assert store.status().pending_notifications == 0
