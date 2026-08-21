@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from scripts.check_pr_governance import extract_closing_issue_numbers
@@ -55,3 +59,20 @@ def test_unmerged_or_non_development_pull_request_closes_nothing() -> None:
     assert issues_to_close(event(merged=False), unexpected_lookup) == ()
     assert issues_to_close(event(base="main"), unexpected_lookup) == ()
     assert issues_to_close({}, unexpected_lookup) == ()
+
+
+def test_module_entry_point_resolves_scripts_package() -> None:
+    repository = Path(__file__).parents[2]
+
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.close_linked_issues"],
+        cwd=repository,
+        env={"PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Issue closure failed:" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
