@@ -212,6 +212,7 @@ comparison baseline.
 The transition detector compares a driver's current normalized results with the
 previous completed observation for the same job. Initial transition types are:
 
+- `initially_available`
 - `became_available`
 - `became_unavailable`
 - `appeared`
@@ -219,7 +220,9 @@ previous completed observation for the same job. Initial transition types are:
 - `availability_unknown`
 
 Notifications are policy-driven. The default useful policy is to notify on
-`became_available`, not on every successful observation.
+`became_available`, not on every successful observation. Jobs may additionally
+select `initially_available` to notify for each available opportunity in the
+first complete snapshot; unavailable and unknown initial states emit nothing.
 
 Append-only publication drivers represent each published event as an
 always-available opportunity and notify on `appeared`. Their first successful
@@ -229,10 +232,12 @@ produce alerts.
 An incomplete or failed check must not be interpreted as every opportunity
 disappearing.
 
-The first successful check for a job creates a baseline and emits no transitions.
-Later checks emit `appeared` and `disappeared` in addition to availability-state
-changes. Changes to titles, links, times, or attributes alone are retained in the
-new snapshot but do not currently produce transitions.
+The first successful check for a job creates a baseline and emits an
+`initially_available` transition for each available opportunity. Existing quiet
+baseline behavior is preserved because jobs notify only on explicitly selected
+transition types. Later checks emit `appeared` and `disappeared` in addition to
+availability-state changes. Changes to titles, links, times, or attributes alone
+are retained in the new snapshot but do not currently produce transitions.
 
 ### Notifiers
 
@@ -804,9 +809,9 @@ validated schemas.
 SQLite stores per-job check runs, ordered opportunity observations, and detected
 transition records. The latest snapshot is compared and the next snapshot is
 written in one immediate transaction to prevent concurrent checks from using the
-same baseline. Initial observations establish a baseline without emitting
-events. Failed driver checks and failed persistence transactions do not replace
-the latest successful state.
+same baseline. Initial observations establish a baseline and emit only the
+normalized `initially_available` events described by D-023. Failed driver checks
+and failed persistence transactions do not replace the latest successful state.
 
 ### D-013: Use a transactional notification outbox
 
@@ -975,6 +980,21 @@ inventory becomes `available` only after opening, and `Full` with zero capacity
 becomes `unavailable`. Unexpectedly empty, incomplete, or structurally changed
 responses fail the check, preserving the last known-good snapshot rather than
 reporting false disappearances.
+
+### D-023: Model opt-in initial availability as a normalized transition
+
+**Status:** Accepted
+
+The first complete successful snapshot emits `initially_available` for each
+opportunity whose normalized availability is `available`. Jobs opt into delivery
+through the existing `notify.on` transition list, so configurations that omit it
+retain quiet baselines. Initial unavailable and unknown opportunities do not
+emit this transition.
+
+The transition and any matching durable outbox rows are persisted atomically
+with the baseline snapshot. An unchanged later check emits nothing, preserving
+deduplication across repeated checks and restarts. Driver failures and incomplete
+responses never reach storage and therefore cannot create an initial alert.
 
 ## Open decisions
 

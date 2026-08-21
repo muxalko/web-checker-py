@@ -139,7 +139,8 @@ def test_check_prints_normalized_opportunities(tmp_path, fixture_html):
     assert "[available] Morning Adventure Pass" in stdout
     assert "[unavailable] Midday Adventure Pass" in stdout
     assert "http://provider.test/book/morning-pass" in stdout
-    assert "State: baseline recorded; no transitions" in stdout
+    assert "State: baseline recorded" in stdout
+    assert "* initially_available: Morning Adventure Pass" in stdout
     assert stderr == ""
 
 
@@ -325,3 +326,21 @@ def test_matching_transition_is_delivered_once(tmp_path, fixture_html):
     assert second_output.count("Notification: mock-passes became_available") == 1
     assert "Notifications: 1 delivered, 0 pending after failure" in second_output
     assert "Notification:" not in third_output
+
+
+def test_selected_initial_availability_is_delivered_once(tmp_path, fixture_html):
+    path = write_job_config(tmp_path, notifications=True)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "on: [became_available]", "on: [initially_available]"
+        ),
+        encoding="utf-8",
+    )
+    command = arguments(path, "check", "mock-passes")
+
+    _, first_output, _ = invoke(command, mock_registry(fixture_html))
+    _, second_output, _ = invoke(command, mock_registry(fixture_html))
+
+    assert first_output.count("Notification: mock-passes initially_available") == 1
+    assert "Notifications: 1 delivered, 0 pending after failure" in first_output
+    assert "Notification:" not in second_output

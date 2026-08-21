@@ -108,11 +108,11 @@ def main(
     for opportunity in execution.result.opportunities:
         print(_format_opportunity(opportunity), file=output)
     if execution.baseline_created:
-        print("State: baseline recorded; no transitions", file=output)
+        print("State: baseline recorded", file=output)
     else:
         print(f"Transitions: {len(execution.transitions)}", file=output)
-        for transition in execution.transitions:
-            print(_format_transition(transition), file=output)
+    for transition in execution.transitions:
+        print(_format_transition(transition), file=output)
     if execution.delivery.delivered or execution.delivery.failed:
         print(
             f"Notifications: {execution.delivery.delivered} delivered, "

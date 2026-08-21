@@ -7,7 +7,11 @@ from pathlib import Path
 
 from web_checker.core.models import Availability, CheckResult, Opportunity
 from web_checker.core.service import RecordOutcome
-from web_checker.core.transitions import TransitionType, detect_transitions
+from web_checker.core.transitions import (
+    TransitionType,
+    detect_initial_transitions,
+    detect_transitions,
+)
 from web_checker.notifications.models import NotificationPlan, PendingNotification
 
 SCHEMA_VERSION = 2
@@ -36,7 +40,9 @@ class SQLiteObservationStore:
             connection.execute("BEGIN IMMEDIATE")
             previous = self._get_latest(connection, job_id)
             transitions = (
-                () if previous is None else detect_transitions(previous, result)
+                detect_initial_transitions(result)
+                if previous is None
+                else detect_transitions(previous, result)
             )
             cursor = connection.execute(
                 "INSERT INTO check_runs (job_id, checked_at) VALUES (?, ?)",

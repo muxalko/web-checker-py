@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 
 from web_checker.core.models import Availability, CheckResult, Opportunity
-from web_checker.core.transitions import TransitionType, detect_transitions
+from web_checker.core.transitions import (
+    TransitionType,
+    detect_initial_transitions,
+    detect_transitions,
+)
 
 
 def opportunity(identifier, availability, title=None):
@@ -56,3 +60,19 @@ def test_unchanged_availability_produces_no_transition():
     )
 
     assert detect_transitions(previous, current) == ()
+
+
+def test_initial_snapshot_emits_only_available_opportunities():
+    current = result(
+        opportunity("available", Availability.AVAILABLE),
+        opportunity("unavailable", Availability.UNAVAILABLE),
+        opportunity("unknown", Availability.UNKNOWN),
+    )
+
+    transitions = detect_initial_transitions(current)
+
+    assert [(item.opportunity_id, item.type) for item in transitions] == [
+        ("available", TransitionType.INITIALLY_AVAILABLE)
+    ]
+    assert transitions[0].previous is None
+    assert transitions[0].current == current.opportunities[0]

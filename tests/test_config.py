@@ -48,13 +48,14 @@ def test_notification_policy_is_normalized(tmp_path):
         + """
     notify:
       channels: [console]
-      on: [became_available, appeared]
+      on: [initially_available, became_available, appeared]
 """
     )
     job = load_config(write_config(tmp_path, content)).jobs[0]
 
     assert job.notifications.channels == ("console",)
     assert {item.value for item in job.notifications.on} == {
+        "initially_available",
         "became_available",
         "appeared",
     }

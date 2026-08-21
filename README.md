@@ -279,6 +279,21 @@ checker does not claim a more precise issuance time.
 
 ## Email notifications
 
+Notification policy may opt into an already-available opportunity on the first
+successful check as well as later availability changes:
+
+```yaml
+notify:
+  channels: [email]
+  on: [initially_available, became_available]
+```
+
+`initially_available` is emitted once for each available opportunity in the
+first complete snapshot. Unavailable and unknown initial states do not match it,
+and an unchanged later check does not send a duplicate. Omitting it preserves
+the quiet-baseline behavior. Driver failures and incomplete responses never
+establish a baseline or enqueue an initial notification.
+
 The `email` channel sends a plain provider-independent message containing only
 the existing opportunity title and source link. For example:
 
