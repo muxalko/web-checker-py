@@ -4,7 +4,9 @@ import argparse
 import asyncio
 import signal
 import sys
+import time
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -15,6 +17,7 @@ from web_checker.core.service import CheckService
 from web_checker.core.transitions import OpportunityTransition
 from web_checker.drivers.errors import DriverError
 from web_checker.drivers.registry import DriverRegistry, create_default_registry
+from web_checker.maintenance import create_backup, read_backup_status, validate_restore
 from web_checker.notifications.registry import (
     NotifierRegistry,
     NotifierRegistryError,
@@ -43,6 +46,19 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser = subparsers.add_parser("check", help="run one configured job once")
     check_parser.add_argument("job_id")
     subparsers.add_parser("worker", help="run enabled jobs on their schedules")
+    maintenance = subparsers.add_parser("maintenance", help="back up and prune state")
+    maintenance.add_argument("--backup-directory", type=Path, required=True)
+    maintenance.add_argument("--observation-days", type=int, default=90)
+    maintenance.add_argument("--notification-days", type=int, default=30)
+    maintenance.add_argument("--retain-backups", type=int, default=14)
+    maintenance.add_argument("--interval-seconds", type=int, default=86400)
+    maintenance.add_argument("--once", action="store_true")
+    status = subparsers.add_parser("status", help="show database and backup status")
+    status.add_argument("--backup-directory", type=Path)
+    restore = subparsers.add_parser(
+        "validate-restore", help="validate a restored database"
+    )
+    restore.add_argument("path", type=Path)
     return parser
 
 
@@ -57,9 +73,20 @@ def main(
     output = stdout or sys.stdout
     errors = stderr or sys.stderr
     arguments = build_parser().parse_args(argv)
-    selected_registry = registry or create_default_registry()
 
     try:
+        if arguments.command == "maintenance":
+            _run_maintenance(arguments, output)
+            return 0
+        if arguments.command == "status":
+            _print_status(arguments.database, arguments.backup_directory, output)
+            return 0
+        if arguments.command == "validate-restore":
+            validate_restore(arguments.path)
+            print(f"Restore valid: {arguments.path}", file=output)
+            return 0
+
+        selected_registry = registry or create_default_registry()
         selected_notifiers = notifier_registry or create_default_notifier_registry(
             output
         )
@@ -120,6 +147,82 @@ def main(
             file=output,
         )
     return 0
+
+
+def _run_maintenance(arguments: argparse.Namespace, output: TextIO) -> None:
+    if arguments.observation_days < 1 or arguments.notification_days < 1:
+        raise StorageError("retention days must be at least 1")
+    if arguments.interval_seconds < 1:
+        raise StorageError("maintenance interval must be at least 1 second")
+    while True:
+        try:
+            _perform_maintenance(arguments, output)
+        except StorageError as error:
+            if arguments.once:
+                raise
+            print(f"maintenance event=failed error={error}", file=output, flush=True)
+        if arguments.once:
+            return
+        time.sleep(arguments.interval_seconds)
+
+
+def _perform_maintenance(arguments: argparse.Namespace, output: TextIO) -> None:
+    store = SQLiteObservationStore(arguments.database)
+    backup = create_backup(
+        arguments.database,
+        arguments.backup_directory,
+        retain=arguments.retain_backups,
+    )
+    now = datetime.now(UTC)
+    result = store.prune(
+        observations_before=now - timedelta(days=arguments.observation_days),
+        notifications_before=now - timedelta(days=arguments.notification_days),
+    )
+    status = store.status()
+    oldest = (
+        status.oldest_observation.isoformat() if status.oldest_observation else "none"
+    )
+    print(
+        "maintenance event=completed "
+        f"backup={backup.path.name} backup_bytes={backup.bytes} "
+        f"database_bytes={status.database_bytes} check_runs={status.check_runs} "
+        f"oldest_observation={oldest} "
+        f"pending_notifications={status.pending_notifications} "
+        f"deleted_runs={result.check_runs_deleted} "
+        f"deleted_notifications={result.completed_notifications_deleted}",
+        file=output,
+        flush=True,
+    )
+
+
+def _print_status(
+    database: Path, backup_directory: Path | None, output: TextIO
+) -> None:
+    status = SQLiteObservationStore(database).status()
+    print(f"Database bytes: {status.database_bytes}", file=output)
+    print(f"Check runs: {status.check_runs}", file=output)
+    print(
+        "Oldest observation: "
+        + (
+            status.oldest_observation.isoformat()
+            if status.oldest_observation
+            else "none"
+        ),
+        file=output,
+    )
+    print(f"Pending notifications: {status.pending_notifications}", file=output)
+    if backup_directory is not None:
+        backup = read_backup_status(backup_directory)
+        print(
+            "Last backup: "
+            + (
+                f"{backup.completed_at.isoformat()} "
+                f"({backup.path}, {backup.bytes} bytes)"
+                if backup
+                else "none"
+            ),
+            file=output,
+        )
 
 
 def _validate_integrations(

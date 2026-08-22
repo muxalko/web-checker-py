@@ -33,8 +33,12 @@ def test_compose_projects_are_explicit_and_isolated() -> None:
     }
 
     assert production["name"] == "web-checker-production"
-    assert set(production["services"]) == {"checker"}
+    assert set(production["services"]) == {"checker", "maintenance"}
     checker = production["services"]["checker"]
+    maintenance = production["services"]["maintenance"]
+    assert maintenance["restart"] == "unless-stopped"
+    assert "maintenance" in maintenance["command"]
+    assert set(production["volumes"]) == {"checker-data", "checker-backups"}
     assert "build" not in checker
     assert "ports" not in checker
     assert "depends_on" not in checker
@@ -82,6 +86,7 @@ def test_dockerfile_has_separate_runtime_targets() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "FROM base AS production" in dockerfile
+    assert "/data /backups" in dockerfile
     assert "python -m pip install ." in dockerfile
     assert "FROM base AS development" in dockerfile
     assert 'python -m pip install --editable ".[dev]"' in dockerfile

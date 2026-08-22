@@ -26,7 +26,7 @@ RUN adduser \
 
 # Named volumes mounted here inherit ownership that permits the non-root checker
 # to create and update its SQLite database.
-RUN install -d -o appuser -g appuser /data
+RUN install -d -o appuser -g appuser /data /backups
 
 FROM base AS production
 
