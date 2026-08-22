@@ -130,7 +130,7 @@ def test_mock_transition_sends_one_notification_without_duplicates(tmp_path):
     assert unchanged.transitions == ()
     assert unchanged.delivery.delivered == 0
     assert len(notifier.notifications) == 1
-    assert notifier.notifications[0].opportunity_id.endswith("2026-08-16:AM")
+    assert notifier.notifications[0].items[0].opportunity_id.endswith("2026-08-16:AM")
 
 
 def test_malformed_mock_response_preserves_last_snapshot(tmp_path):

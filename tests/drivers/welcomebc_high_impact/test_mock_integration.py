@@ -79,8 +79,8 @@ def test_published_draw_sends_exactly_one_appeared_notification(tmp_path):
     assert unchanged.transitions == ()
     assert unchanged.delivery.delivered == 0
     assert len(notifier.notifications) == 1
-    assert notifier.notifications[0].transition_type is TransitionType.APPEARED
-    assert notifier.notifications[0].opportunity_title == (
+    assert notifier.notifications[0].items[0].transition_type is TransitionType.APPEARED
+    assert notifier.notifications[0].items[0].opportunity_title == (
         "BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)"
     )
 

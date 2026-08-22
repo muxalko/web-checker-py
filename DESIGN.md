@@ -268,34 +268,40 @@ are retained in the new snapshot but do not currently produce transitions.
 
 ### Notifiers
 
-Notifiers are interchangeable delivery adapters. Initial implementations are:
+Notifiers are interchangeable digest delivery adapters. Initial implementations
+are:
 
 - Console notifier for local development.
-- SMTP email notifier for real delivery using the generic title and source link.
+- SMTP email notifier for real delivery using generic opportunity fields.
 - Fake/capturing notifier for tests.
 
 Telegram, Pushover, Slack, or generic webhooks can be added without
 changing drivers or transition detection.
 
-Provider-specific attributes remain an opaque JSON mapping on stored
-opportunity observations. Notification outbox rows deliberately contain a fixed
-provider-independent subset; the email adapter does not read or copy the
-attributes blob. SMTP connection and address settings come from environment
-variables, with secret values excluded from job configuration and logs.
+Provider-specific attributes remain an opaque JSON mapping on stored opportunity
+observations. Each digest item deliberately contains only a fixed
+provider-independent subset: transition type, stable ID, title, normalized
+current availability, relevant time, and source link. The email adapter does not
+read or copy the attributes blob. SMTP connection and address settings come from
+environment variables, with secret values excluded from job configuration and
+logs.
 
-Notification policy is configured per job as a set of transition types and
-named channels. Matching delivery intents are written to a durable SQLite outbox
-in the same transaction as the snapshot and transition. The dispatcher marks a
-delivery complete only after its adapter returns successfully. Failed or unknown
-channels remain pending with attempt and error metadata and are retried on a
-later dispatch pass.
+Notification policy is configured per job as a set of transition types and named
+channels. Matching transitions from one completed check are ordered by relevant
+time, case-folded title, stable opportunity ID, and transition type. SQLite
+writes one durable delivery envelope per check and channel in the same
+transaction as the snapshot and transitions. Each envelope contains at most 25
+items; larger checks are split into deterministically numbered parts without
+discarding items.
 
-The outbox uniquely identifies each transition/channel pair, preventing a
-successfully recorded delivery from being emitted again. Delivery is
-at-least-once rather than exactly-once across a process crash: if an external
-adapter succeeds but the process stops before SQLite records success, that item
-will be retried. Adapters added in the future should use provider idempotency keys
-where available.
+The outbox uniquely identifies each check/channel/part envelope, while its child
+items retain unique transition/channel identities. The dispatcher marks the
+whole envelope complete only after its adapter returns successfully. Failed or
+unknown channels leave the complete digest part pending with attempt and error
+metadata for a later pass. Delivery is at-least-once rather than exactly-once
+across a process crash: if an external adapter succeeds but the process stops
+before SQLite records success, that digest part will be retried. Adapters added
+in the future should use provider idempotency keys where available.
 
 The `status --health` command reports application health rather than process
 liveness: per-job success/failure timestamps, consecutive failures, current
@@ -757,7 +763,8 @@ The prioritized future delivery plan is maintained in
 - **Milestone 6: Operational resilience** — bounded retention and tested
   backups, followed by status reporting and repeated-failure alerts.
 - **Milestone 7: Notification experience** — grouped provider-independent
-  digest delivery without weakening outbox guarantees.
+  digest delivery without weakening outbox guarantees. **Implemented with
+  bounded, deterministically ordered durable digest envelopes.**
 - **Milestone 8: Configuration and provider ergonomics** — read-only provider
   discovery, deterministic job matrices, and timezone-aware adaptive polling.
 
@@ -870,12 +877,13 @@ and failed persistence transactions do not replace the latest successful state.
 
 **Status:** Accepted
 
-For every transition selected by a job's notification policy, SQLite creates one
-outbox row per channel inside the snapshot transaction. A dispatcher uses the
-explicit notifier registry, marks successful rows delivered, and retains failed
-rows for retry. The uniqueness constraint on transition and channel deduplicates
-completed work. Cross-process delivery semantics are at-least-once because an
-external send and the local delivered marker cannot share one transaction.
+For transitions selected by a job's notification policy, SQLite creates bounded
+digest envelopes per check and channel inside the snapshot transaction. A
+dispatcher uses the explicit notifier registry, marks successful envelopes
+delivered, and retains failed envelopes for retry. Envelope and child-item
+uniqueness constraints deduplicate completed work. Cross-process delivery
+semantics are at-least-once because an external send and the local delivered
+marker cannot share one transaction.
 
 ### D-014: Use a purpose-built monotonic interval scheduler
 
@@ -1009,14 +1017,14 @@ by default.
 
 Opportunity observations combine fixed provider-independent fields with an
 opaque provider-specific attributes mapping serialized as JSON. Notification
-delivery adapters consume only the fixed `PendingNotification` projection. The
-first SMTP adapter formats the existing opportunity title and source link and
-does not interpret or duplicate the attributes mapping.
+delivery adapters consume a `PendingNotification` digest containing fixed
+`NotificationItem` projections. Each item exposes only transition type, stable
+ID, title, normalized current availability, relevant time, and source link. The
+SMTP adapter does not interpret or duplicate the attributes mapping.
 
-This keeps email reusable across all drivers and avoids a storage migration for
-the first real channel. A future richer notification contract must be justified
-as a provider-independent capability rather than exposing arbitrary driver data
-to adapters.
+This keeps every adapter reusable across drivers. A future richer notification
+contract must be justified as a provider-independent capability rather than
+exposing arbitrary driver data to adapters.
 
 ### D-022: Use anonymous structured BC Parks endpoints behind a local mock
 
@@ -1057,6 +1065,24 @@ The transition and any matching durable outbox rows are persisted atomically
 with the baseline snapshot. An unchanged later check emits nothing, preserving
 deduplication across repeated checks and restarts. Driver failures and incomplete
 responses never reach storage and therefore cannot create an initial alert.
+
+### D-024: Persist bounded notification digests per check and channel
+
+**Status:** Accepted
+
+Related selected transitions share one durable delivery envelope for a job,
+check, and channel. Items are ordered by relevant time, case-folded title, stable
+opportunity ID, and transition type. Each envelope contains at most 25 items;
+larger checks split into numbered parts using that same stable order. This bound
+keeps adapter payloads predictable without dropping transitions.
+
+The envelope is the retry and success unit. A failed part remains wholly pending,
+and a successful part is marked complete atomically. Child items retain the
+transition/channel uniqueness that prevents duplicate enqueueing. Schema-v3
+databases migrate legacy deliveries into one-item parts so their individual
+success or failure state is preserved and already delivered messages are not
+replayed. Health and retention report and protect envelope counts rather than
+counting each transition as a separate external delivery.
 
 ## Open decisions
 

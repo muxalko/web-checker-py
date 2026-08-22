@@ -14,12 +14,14 @@ from web_checker.core.transitions import (
     detect_transitions,
 )
 from web_checker.notifications.models import (
+    MAX_DIGEST_ITEMS,
+    NotificationItem,
     NotificationPlan,
     OperationalAlert,
     PendingNotification,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,7 @@ class SQLiteObservationStore:
                         ),
                     ),
                 )
+            queued_items: list[tuple[int, NotificationItem]] = []
             for transition in transitions:
                 transition_cursor = connection.execute(
                     """
@@ -143,29 +146,31 @@ class SQLiteObservationStore:
                 )
                 if transition.type in plan.on:
                     opportunity = transition.current or transition.previous
-                    for channel in plan.channels:
-                        connection.execute(
-                            """
-                            INSERT INTO notification_outbox (
-                                transition_id, channel, job_id, transition_type,
-                                opportunity_id, opportunity_title,
-                                current_availability, booking_url, checked_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                transition_cursor.lastrowid,
-                                channel,
-                                job_id,
-                                transition.type.value,
-                                transition.opportunity_id,
-                                opportunity.title,
-                                transition.current.availability.value
-                                if transition.current is not None
-                                else None,
-                                opportunity.booking_url,
-                                result.checked_at.isoformat(),
+                    queued_items.append(
+                        (
+                            transition_cursor.lastrowid,
+                            NotificationItem(
+                                transition_type=transition.type,
+                                opportunity_id=transition.opportunity_id,
+                                opportunity_title=opportunity.title,
+                                current_availability=(
+                                    transition.current.availability
+                                    if transition.current is not None
+                                    else None
+                                ),
+                                starts_at=opportunity.starts_at,
+                                booking_url=opportunity.booking_url,
                             ),
                         )
+                    )
+            self._enqueue_notification_digests(
+                connection,
+                run_id=run_id,
+                job_id=job_id,
+                checked_at=result.checked_at,
+                channels=plan.channels,
+                items=queued_items,
+            )
             connection.commit()
             return RecordOutcome(
                 baseline_created=previous is None,
@@ -211,9 +216,8 @@ class SQLiteObservationStore:
                   AND id NOT IN (SELECT MAX(id) FROM check_runs GROUP BY job_id)
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM transitions t
-                      JOIN notification_outbox n ON n.transition_id = t.id
-                      WHERE t.run_id = check_runs.id AND n.delivered_at IS NULL
+                      FROM notification_outbox n
+                      WHERE n.run_id = check_runs.id AND n.delivered_at IS NULL
                   )
                 """,
                 (observations_before.isoformat(),),
@@ -503,6 +507,74 @@ class SQLiteObservationStore:
                 (key, channel, job_id, title, detail, created_at.isoformat()),
             )
 
+    @staticmethod
+    def _enqueue_notification_digests(
+        connection,
+        *,
+        run_id: int,
+        job_id: str,
+        checked_at: datetime,
+        channels: tuple[str, ...],
+        items: list[tuple[int, NotificationItem]],
+    ) -> None:
+        ordered = sorted(
+            items,
+            key=lambda queued: (
+                queued[1].starts_at is None,
+                queued[1].starts_at.isoformat() if queued[1].starts_at else "",
+                queued[1].opportunity_title.casefold(),
+                queued[1].opportunity_id,
+                queued[1].transition_type.value,
+            ),
+        )
+        chunks = tuple(
+            ordered[position : position + MAX_DIGEST_ITEMS]
+            for position in range(0, len(ordered), MAX_DIGEST_ITEMS)
+        )
+        for channel in channels:
+            for part_index, chunk in enumerate(chunks):
+                cursor = connection.execute(
+                    """
+                    INSERT INTO notification_outbox (
+                        run_id, channel, job_id, checked_at, part_index, part_count
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        channel,
+                        job_id,
+                        checked_at.isoformat(),
+                        part_index,
+                        len(chunks),
+                    ),
+                )
+                for position, (transition_id, item) in enumerate(chunk):
+                    connection.execute(
+                        """
+                        INSERT INTO notification_outbox_items (
+                            notification_id, position, transition_id, channel,
+                            transition_type, opportunity_id, opportunity_title,
+                            current_availability, starts_at, booking_url
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            cursor.lastrowid,
+                            position,
+                            transition_id,
+                            channel,
+                            item.transition_type.value,
+                            item.opportunity_id,
+                            item.opportunity_title,
+                            item.current_availability.value
+                            if item.current_availability is not None
+                            else None,
+                            item.starts_at.isoformat()
+                            if item.starts_at is not None
+                            else None,
+                            item.booking_url,
+                        ),
+                    )
+
     def list_pending_notifications(
         self, limit: int = 100
     ) -> tuple[PendingNotification, ...]:
@@ -512,9 +584,8 @@ class SQLiteObservationStore:
         try:
             rows = connection.execute(
                 """
-                SELECT id, channel, job_id, transition_type, opportunity_id,
-                       opportunity_title, current_availability, booking_url,
-                       checked_at, attempts
+                SELECT id, channel, job_id, checked_at, part_index, part_count,
+                       attempts
                 FROM notification_outbox
                 WHERE delivered_at IS NULL
                 ORDER BY id
@@ -522,23 +593,46 @@ class SQLiteObservationStore:
                 """,
                 (limit,),
             ).fetchall()
-            return tuple(
-                PendingNotification(
-                    id=row["id"],
-                    channel=row["channel"],
-                    job_id=row["job_id"],
-                    transition_type=TransitionType(row["transition_type"]),
-                    opportunity_id=row["opportunity_id"],
-                    opportunity_title=row["opportunity_title"],
-                    current_availability=Availability(row["current_availability"])
-                    if row["current_availability"] is not None
-                    else None,
-                    booking_url=row["booking_url"],
-                    checked_at=datetime.fromisoformat(row["checked_at"]),
-                    attempts=row["attempts"],
+            notifications = []
+            for row in rows:
+                item_rows = connection.execute(
+                    """
+                    SELECT transition_type, opportunity_id, opportunity_title,
+                           current_availability, starts_at, booking_url
+                    FROM notification_outbox_items
+                    WHERE notification_id = ? ORDER BY position
+                    """,
+                    (row["id"],),
+                ).fetchall()
+                notifications.append(
+                    PendingNotification(
+                        id=row["id"],
+                        channel=row["channel"],
+                        job_id=row["job_id"],
+                        checked_at=datetime.fromisoformat(row["checked_at"]),
+                        items=tuple(
+                            NotificationItem(
+                                transition_type=TransitionType(item["transition_type"]),
+                                opportunity_id=item["opportunity_id"],
+                                opportunity_title=item["opportunity_title"],
+                                current_availability=Availability(
+                                    item["current_availability"]
+                                )
+                                if item["current_availability"] is not None
+                                else None,
+                                starts_at=datetime.fromisoformat(item["starts_at"])
+                                if item["starts_at"] is not None
+                                else None,
+                                booking_url=item["booking_url"],
+                            )
+                            for item in item_rows
+                        ),
+                        part_number=row["part_index"] + 1,
+                        part_count=row["part_count"],
+                        attempts=row["attempts"],
+                    )
                 )
-                for row in rows
-            )
+            return tuple(notifications)
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise StorageError(
                 f"could not read pending notifications: {error}"
@@ -639,24 +733,38 @@ class SQLiteObservationStore:
 
                     CREATE TABLE notification_outbox (
                         id INTEGER PRIMARY KEY,
-                        transition_id INTEGER NOT NULL REFERENCES transitions(id)
+                        run_id INTEGER NOT NULL REFERENCES check_runs(id)
                             ON DELETE CASCADE,
                         channel TEXT NOT NULL,
                         job_id TEXT NOT NULL,
-                        transition_type TEXT NOT NULL,
-                        opportunity_id TEXT NOT NULL,
-                        opportunity_title TEXT NOT NULL,
-                        current_availability TEXT,
-                        booking_url TEXT,
                         checked_at TEXT NOT NULL,
+                        part_index INTEGER NOT NULL,
+                        part_count INTEGER NOT NULL,
                         attempts INTEGER NOT NULL DEFAULT 0,
                         last_attempt_at TEXT,
                         last_error TEXT,
                         delivered_at TEXT,
-                        UNIQUE (transition_id, channel)
+                        UNIQUE (run_id, channel, part_index)
                     );
                     CREATE INDEX notification_outbox_pending
                         ON notification_outbox (delivered_at, id);
+
+                    CREATE TABLE notification_outbox_items (
+                        notification_id INTEGER NOT NULL
+                            REFERENCES notification_outbox(id) ON DELETE CASCADE,
+                        position INTEGER NOT NULL,
+                        transition_id INTEGER NOT NULL REFERENCES transitions(id)
+                            ON DELETE CASCADE,
+                        channel TEXT NOT NULL,
+                        transition_type TEXT NOT NULL,
+                        opportunity_id TEXT NOT NULL,
+                        opportunity_title TEXT NOT NULL,
+                        current_availability TEXT,
+                        starts_at TEXT,
+                        booking_url TEXT,
+                        PRIMARY KEY (notification_id, position),
+                        UNIQUE (transition_id, channel)
+                    );
 
                     CREATE TABLE job_status (
                         job_id TEXT PRIMARY KEY,
@@ -683,7 +791,7 @@ class SQLiteObservationStore:
                     CREATE INDEX operational_alert_pending
                         ON operational_alert_outbox (delivered_at, id);
 
-                    PRAGMA user_version = 3;
+                    PRAGMA user_version = 4;
                     """
                 )
             elif version == 1:
@@ -758,6 +866,9 @@ class SQLiteObservationStore:
                         """
                     )
                     connection.commit()
+                version = 3
+            if version == 3:
+                self._migrate_notification_digests(connection)
         except StorageError:
             raise
         except sqlite3.Error as error:
@@ -767,6 +878,136 @@ class SQLiteObservationStore:
         finally:
             if connection is not None:
                 connection.close()
+
+    @staticmethod
+    def _migrate_notification_digests(connection: sqlite3.Connection) -> None:
+        """Preserve v3 delivery state while adopting durable digest envelopes."""
+        connection.executescript(
+            """
+            DROP INDEX IF EXISTS notification_outbox_pending;
+            ALTER TABLE notification_outbox RENAME TO notification_outbox_v3;
+
+            CREATE TABLE notification_outbox (
+                id INTEGER PRIMARY KEY,
+                run_id INTEGER NOT NULL REFERENCES check_runs(id) ON DELETE CASCADE,
+                channel TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                part_index INTEGER NOT NULL,
+                part_count INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                last_error TEXT,
+                delivered_at TEXT,
+                UNIQUE (run_id, channel, part_index)
+            );
+            CREATE INDEX notification_outbox_pending
+                ON notification_outbox (delivered_at, id);
+
+            CREATE TABLE notification_outbox_items (
+                notification_id INTEGER NOT NULL
+                    REFERENCES notification_outbox(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                transition_id INTEGER NOT NULL REFERENCES transitions(id)
+                    ON DELETE CASCADE,
+                channel TEXT NOT NULL,
+                transition_type TEXT NOT NULL,
+                opportunity_id TEXT NOT NULL,
+                opportunity_title TEXT NOT NULL,
+                current_availability TEXT,
+                starts_at TEXT,
+                booking_url TEXT,
+                PRIMARY KEY (notification_id, position),
+                UNIQUE (transition_id, channel)
+            );
+            """
+        )
+        legacy_count = connection.execute(
+            "SELECT COUNT(*) FROM notification_outbox_v3"
+        ).fetchone()[0]
+        if legacy_count:
+            rows = connection.execute(
+                """
+                SELECT n.*, t.run_id
+                FROM notification_outbox_v3 n
+                JOIN transitions t ON t.id = n.transition_id
+                ORDER BY t.run_id, n.channel, n.id
+                """
+            ).fetchall()
+            group_counts: dict[tuple[int, str], int] = {}
+            for row in rows:
+                key = (row["run_id"], row["channel"])
+                group_counts[key] = group_counts.get(key, 0) + 1
+            group_positions: dict[tuple[int, str], int] = {}
+            for row in rows:
+                key = (row["run_id"], row["channel"])
+                part_index = group_positions.get(key, 0)
+                group_positions[key] = part_index + 1
+                cursor = connection.execute(
+                    """
+                    INSERT INTO notification_outbox (
+                        run_id, channel, job_id, checked_at, part_index, part_count,
+                        attempts, last_attempt_at, last_error, delivered_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["run_id"],
+                        row["channel"],
+                        row["job_id"],
+                        row["checked_at"],
+                        part_index,
+                        group_counts[key],
+                        row["attempts"],
+                        row["last_attempt_at"],
+                        row["last_error"],
+                        row["delivered_at"],
+                    ),
+                )
+                starts_at_row = connection.execute(
+                    """
+                    SELECT starts_at FROM opportunity_observations
+                    WHERE run_id = ? AND opportunity_id = ?
+                    """,
+                    (row["run_id"], row["opportunity_id"]),
+                ).fetchone()
+                if starts_at_row is None:
+                    starts_at_row = connection.execute(
+                        """
+                        SELECT o.starts_at
+                        FROM check_runs r
+                        JOIN opportunity_observations o ON o.run_id = r.id
+                        WHERE r.job_id = ? AND r.id < ? AND o.opportunity_id = ?
+                        ORDER BY r.id DESC LIMIT 1
+                        """,
+                        (row["job_id"], row["run_id"], row["opportunity_id"]),
+                    ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO notification_outbox_items (
+                        notification_id, position, transition_id, channel,
+                        transition_type, opportunity_id, opportunity_title,
+                        current_availability, starts_at, booking_url
+                    ) VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        cursor.lastrowid,
+                        row["transition_id"],
+                        row["channel"],
+                        row["transition_type"],
+                        row["opportunity_id"],
+                        row["opportunity_title"],
+                        row["current_availability"],
+                        starts_at_row["starts_at"] if starts_at_row else None,
+                        row["booking_url"],
+                    ),
+                )
+        connection.executescript(
+            """
+            DROP TABLE notification_outbox_v3;
+            PRAGMA user_version = 4;
+            """
+        )
+        connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         try:

@@ -96,9 +96,15 @@ def test_mock_draw_is_captured_as_one_generic_email(tmp_path):
         "(450 invitations)"
     )
     assert message["Text"] == (
-        "BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)\r\n"
+        "Availability changes for job: welcomebc\r\n"
+        "Checked at: 2026-08-13T20:00:00+00:00\r\n"
         "\r\n"
-        "http://mock-site/welcomebc/invitations-to-apply\r\n"
+        "1. BC PNP High Economic Impact draw on August 13, 2026 "
+        "(450 invitations)\r\n"
+        "   Transition: appeared\r\n"
+        "   Availability: available\r\n"
+        "   Starts at: 2026-08-13T00:00:00\r\n"
+        "   Link: http://mock-site/welcomebc/invitations-to-apply\r\n"
     )
     assert [recipient["Address"] for recipient in message["To"]] == [
         "operator@example.test"

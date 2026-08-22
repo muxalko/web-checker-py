@@ -153,20 +153,53 @@ class EmailNotifier:
             title = " ".join(notification.title.split())
             content = notification.detail
         else:
-            title = " ".join(notification.opportunity_title.split())
-            content = title
+            title = self._digest_title(notification)
+            content = self._digest_content(notification)
         message = EmailMessage()
         message["Subject"] = f"[Web Checker] {title}"
         message["From"] = self._settings.sender
         message["To"] = ", ".join(self._settings.recipients)
-        lines = [content]
-        if (
-            isinstance(notification, PendingNotification)
-            and notification.booking_url is not None
-        ):
-            lines.extend(("", notification.booking_url))
-        message.set_content("\n".join(lines) + "\n")
+        message.set_content(content.rstrip() + "\n")
         return message
+
+    @staticmethod
+    def _digest_title(notification: PendingNotification) -> str:
+        if len(notification.items) == 1:
+            title = " ".join(notification.items[0].opportunity_title.split())
+        else:
+            title = f"{notification.job_id}: {len(notification.items)} changes"
+        if notification.part_count > 1:
+            title += f" (part {notification.part_number}/{notification.part_count})"
+        return title
+
+    @staticmethod
+    def _digest_content(notification: PendingNotification) -> str:
+        lines = [
+            f"Availability changes for job: {notification.job_id}",
+            f"Checked at: {notification.checked_at.isoformat()}",
+        ]
+        if notification.part_count > 1:
+            lines.append(
+                f"Digest part: {notification.part_number}/{notification.part_count}"
+            )
+        for position, item in enumerate(notification.items, start=1):
+            availability = (
+                item.current_availability.value
+                if item.current_availability is not None
+                else "not present"
+            )
+            starts_at = item.starts_at.isoformat() if item.starts_at else "not provided"
+            lines.extend(
+                (
+                    "",
+                    f"{position}. {item.opportunity_title}",
+                    f"   Transition: {item.transition_type.value}",
+                    f"   Availability: {availability}",
+                    f"   Starts at: {starts_at}",
+                    f"   Link: {item.booking_url or 'not provided'}",
+                )
+            )
+        return "\n".join(lines)
 
     def _send_message(self, message: EmailMessage) -> None:
         settings = self._settings

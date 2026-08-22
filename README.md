@@ -239,9 +239,10 @@ transitions from the previous successful check, and exits. The named Compose
 volume preserves `/data/web-checker.db`.
 
 The example job sends a console notification when an opportunity becomes
-available. Notification intents are persisted with the transition, successful
-deliveries are deduplicated, and failed deliveries remain pending for retry on a
-later check.
+available. Related transitions from one check are grouped into a digest for each
+selected channel. Notification intents are persisted with the transitions,
+successful deliveries are deduplicated, and failed deliveries remain pending for
+retry on a later check.
 
 ## WelcomeBC High Economic Impact draws
 
@@ -297,18 +298,26 @@ and an unchanged later check does not send a duplicate. Omitting it preserves
 the quiet-baseline behavior. Driver failures and incomplete responses never
 establish a baseline or enqueue an initial notification.
 
-The `email` channel sends a plain provider-independent message containing only
-the existing opportunity title and source link. For example:
+The `email` channel sends a plain provider-independent digest. Every item includes
+the normalized transition, current availability, relevant time, and source link;
+missing optional values are explicit. For example:
 
 ```text
-BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)
+Availability changes for job: welcomebc-high-impact-itas
+Checked at: 2026-08-13T20:00:00+00:00
 
-https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
+1. BC PNP High Economic Impact draw on August 13, 2026 (450 invitations)
+   Transition: appeared
+   Availability: available
+   Starts at: 2026-08-13T00:00:00
+   Link: https://www.welcomebc.ca/immigrate-to-b-c/about-the-bc-provincial-nominee-program/invitations-to-apply
 ```
 
-The adapter does not inspect the driver's provider-specific `attributes` JSON,
-and adding email does not change the notification model or SQLite schema. Set
-these environment variables before enabling a job that selects `email`:
+Items are ordered by relevant time, then title and stable opportunity ID. A
+digest contains at most 25 items; a larger check is split into deterministically
+numbered parts so no transition is discarded. The adapter does not inspect the
+driver's provider-specific `attributes` JSON. Set these environment variables
+before enabling a job that selects `email`:
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
@@ -327,11 +336,11 @@ Any partial or invalid SMTP configuration fails startup without printing the
 password. Credentials belong in the operator-owned production environment file,
 never in `jobs.yaml` or Git.
 
-Normal deliveries are deduplicated through the durable outbox. A failed SMTP
-send remains pending and is attempted after a later successful check. Delivery
-is at-least-once across a process crash, so the narrow interval after an SMTP
-server accepts a message but before SQLite records success can produce a
-duplicate.
+Normal digest deliveries are deduplicated through the durable outbox. A failed
+SMTP send leaves the complete digest part pending and it is attempted after a
+later successful check. Delivery is at-least-once across a process crash, so the
+narrow interval after an SMTP server accepts a message but before SQLite records
+success can produce a duplicate.
 
 ## BC Parks day-use driver
 

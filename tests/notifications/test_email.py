@@ -11,7 +11,11 @@ from web_checker.notifications.email import (
     EmailNotifier,
     SMTPSettings,
 )
-from web_checker.notifications.models import OperationalAlert, PendingNotification
+from web_checker.notifications.models import (
+    NotificationItem,
+    OperationalAlert,
+    PendingNotification,
+)
 from web_checker.notifications.registry import (
     NotifierRegistryError,
     create_default_notifier_registry,
@@ -34,12 +38,19 @@ def pending(channel="email"):
         id=1,
         channel=channel,
         job_id="job",
-        transition_type=TransitionType.BECAME_AVAILABLE,
-        opportunity_id="pass",
-        opportunity_title="Morning Pass",
-        current_availability=Availability.AVAILABLE,
-        booking_url="https://example.test/book",
         checked_at=datetime(2026, 8, 10, 12, 0, tzinfo=UTC),
+        items=(
+            NotificationItem(
+                transition_type=TransitionType.BECAME_AVAILABLE,
+                opportunity_id="pass",
+                opportunity_title="Morning Pass",
+                current_availability=Availability.AVAILABLE,
+                starts_at=datetime(2026, 8, 22, 9, 0, tzinfo=UTC),
+                booking_url="https://example.test/book",
+            ),
+        ),
+        part_number=1,
+        part_count=1,
         attempts=0,
     )
 
@@ -178,7 +189,15 @@ def test_email_notifier_sends_title_and_link_over_authenticated_starttls():
     assert smtp.message["Subject"] == "[Web Checker] Morning Pass"
     assert smtp.message["From"] == "alerts@example.test"
     assert smtp.message["To"] == "one@example.test, two@example.test"
-    assert smtp.message.get_content() == ("Morning Pass\n\nhttps://example.test/book\n")
+    assert smtp.message.get_content() == (
+        "Availability changes for job: job\n"
+        "Checked at: 2026-08-10T12:00:00+00:00\n\n"
+        "1. Morning Pass\n"
+        "   Transition: became_available\n"
+        "   Availability: available\n"
+        "   Starts at: 2026-08-22T09:00:00+00:00\n"
+        "   Link: https://example.test/book\n"
+    )
     assert smtp.closed is True
 
 
@@ -207,6 +226,43 @@ def test_email_notifier_formats_operational_alert_detail():
     message = smtp_factory.instances[0].message
     assert message["Subject"] == "[Web Checker] Repeated check failures: job"
     assert "Three consecutive checks failed." in message.get_content()
+
+
+def test_email_notifier_groups_multiple_items_in_one_numbered_digest():
+    settings = SMTPSettings.from_environment(SMTP_ENVIRONMENT)
+    assert settings is not None
+    smtp_factory = SMTPFactory()
+    original = pending()
+    second = replace(
+        original.items[0],
+        opportunity_id="evening",
+        opportunity_title="Evening Pass",
+        current_availability=None,
+        starts_at=None,
+        booking_url=None,
+        transition_type=TransitionType.DISAPPEARED,
+    )
+    notification = replace(
+        original,
+        items=(original.items[0], second),
+        part_number=2,
+        part_count=3,
+    )
+    notifier = EmailNotifier(
+        settings,
+        smtp_factory=smtp_factory,
+        ssl_context_factory=lambda: object(),
+    )
+
+    asyncio.run(notifier.send(notification))
+
+    message = smtp_factory.instances[0].message
+    assert message["Subject"] == "[Web Checker] job: 2 changes (part 2/3)"
+    assert "1. Morning Pass" in message.get_content()
+    assert "2. Evening Pass" in message.get_content()
+    assert "Availability: not present" in message.get_content()
+    assert "Starts at: not provided" in message.get_content()
+    assert "Link: not provided" in message.get_content()
 
 
 def test_email_notifier_supports_implicit_tls_without_authentication():
@@ -246,7 +302,11 @@ def test_email_notifier_supports_plain_local_capture_and_missing_link():
         recipients=("operator@example.test",),
     )
     smtp_factory = SMTPFactory()
-    notification = replace(pending(), booking_url=None)
+    original = pending()
+    notification = replace(
+        original,
+        items=(replace(original.items[0], booking_url=None, starts_at=None),),
+    )
     notifier = EmailNotifier(
         settings,
         smtp_factory=smtp_factory,
@@ -260,4 +320,5 @@ def test_email_notifier_supports_plain_local_capture_and_missing_link():
     smtp = smtp_factory.instances[0]
     assert smtp.starttls_context is None
     assert smtp.login_credentials is None
-    assert smtp.message.get_content() == "Morning Pass\n"
+    assert "Starts at: not provided" in smtp.message.get_content()
+    assert "Link: not provided" in smtp.message.get_content()
