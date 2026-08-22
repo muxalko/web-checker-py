@@ -2,7 +2,9 @@
 
 from typing import Protocol, runtime_checkable
 
-from web_checker.notifications.models import PendingNotification
+from web_checker.notifications.models import OperationalAlert, PendingNotification
+
+Notification = PendingNotification | OperationalAlert
 
 
 @runtime_checkable
@@ -12,4 +14,4 @@ class Notifier(Protocol):
     @property
     def name(self) -> str: ...
 
-    async def send(self, notification: PendingNotification) -> None: ...
+    async def send(self, notification: Notification) -> None: ...
