@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 import time
@@ -18,6 +19,7 @@ from web_checker.core.transitions import OpportunityTransition
 from web_checker.drivers.errors import DriverError
 from web_checker.drivers.registry import DriverRegistry, create_default_registry
 from web_checker.maintenance import create_backup, read_backup_status, validate_restore
+from web_checker.notifications.operational import OperationalAlertService
 from web_checker.notifications.registry import (
     NotifierRegistry,
     NotifierRegistryError,
@@ -55,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     maintenance.add_argument("--once", action="store_true")
     status = subparsers.add_parser("status", help="show database and backup status")
     status.add_argument("--backup-directory", type=Path)
+    status.add_argument(
+        "--health",
+        action="store_true",
+        help="exit nonzero when application health is degraded",
+    )
     restore = subparsers.add_parser(
         "validate-restore", help="validate a restored database"
     )
@@ -79,8 +86,10 @@ def main(
             _run_maintenance(arguments, output)
             return 0
         if arguments.command == "status":
-            _print_status(arguments.database, arguments.backup_directory, output)
-            return 0
+            healthy = _print_status(
+                arguments.database, arguments.backup_directory, output
+            )
+            return 0 if healthy or not arguments.health else 2
         if arguments.command == "validate-restore":
             validate_restore(arguments.path)
             print(f"Restore valid: {arguments.path}", file=output)
@@ -197,7 +206,7 @@ def _perform_maintenance(arguments: argparse.Namespace, output: TextIO) -> None:
 
 def _print_status(
     database: Path, backup_directory: Path | None, output: TextIO
-) -> None:
+) -> bool:
     status = SQLiteObservationStore(database).status()
     print(f"Database bytes: {status.database_bytes}", file=output)
     print(f"Check runs: {status.check_runs}", file=output)
@@ -211,6 +220,31 @@ def _print_status(
         file=output,
     )
     print(f"Pending notifications: {status.pending_notifications}", file=output)
+    jobs = SQLiteObservationStore(database).list_job_statuses()
+    healthy = True
+    for job in jobs:
+        if job.consecutive_failures or job.failed_deliveries:
+            healthy = False
+        availability = (
+            ",".join(
+                f"{name}:{count}" for name, count in sorted(job.availability.items())
+            )
+            or "none"
+        )
+        last_failure = (
+            job.last_failure_at.isoformat() if job.last_failure_at else "none"
+        )
+        print(
+            f"Job {job.job_id}: last_success="
+            f"{job.last_success_at.isoformat() if job.last_success_at else 'none'} "
+            f"last_failure={last_failure} "
+            f"consecutive_failures={job.consecutive_failures} "
+            f"availability={availability} pending_deliveries={job.pending_deliveries} "
+            f"failed_deliveries={job.failed_deliveries}",
+            file=output,
+        )
+        if job.last_error is not None:
+            print(f"  Last error: {job.last_error}", file=output)
     if backup_directory is not None:
         backup = read_backup_status(backup_directory)
         print(
@@ -223,6 +257,7 @@ def _print_status(
             ),
             file=output,
         )
+    return healthy
 
 
 def _validate_integrations(
@@ -256,6 +291,30 @@ async def _run_worker(
     output: TextIO,
 ) -> None:
     store = SQLiteObservationStore(database)
+    default_operational_channels = (
+        "console,email" if "email" in notifier_registry.names() else "console"
+    )
+    operational_channels = tuple(
+        item.strip()
+        for item in os.environ.get(
+            "WEB_CHECKER_OPERATIONAL_CHANNELS", default_operational_channels
+        ).split(",")
+        if item.strip()
+    )
+    if not operational_channels:
+        raise ConfigurationError("WEB_CHECKER_OPERATIONAL_CHANNELS must not be empty")
+    try:
+        failure_alert_after = int(
+            os.environ.get("WEB_CHECKER_FAILURE_ALERT_AFTER", "3")
+        )
+    except ValueError as error:
+        raise ConfigurationError(
+            "WEB_CHECKER_FAILURE_ALERT_AFTER must be an integer"
+        ) from error
+    if failure_alert_after < 1:
+        raise ConfigurationError("WEB_CHECKER_FAILURE_ALERT_AFTER must be at least 1")
+    for channel in operational_channels:
+        notifier_registry.get(channel)
     service = CheckService(
         registry,
         store,
@@ -266,6 +325,13 @@ async def _run_worker(
         config.jobs,
         service,
         event_sink=lambda event: print(event, file=output, flush=True),
+        operational_alerts=OperationalAlertService(
+            store,
+            notifier_registry,
+            event_sink=lambda event: print(event, file=output, flush=True),
+        ),
+        failure_alert_after=failure_alert_after,
+        operational_channels=operational_channels,
     )
     loop = asyncio.get_running_loop()
     installed_signals = []

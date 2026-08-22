@@ -11,7 +11,7 @@ from web_checker.notifications.email import (
     EmailNotifier,
     SMTPSettings,
 )
-from web_checker.notifications.models import PendingNotification
+from web_checker.notifications.models import OperationalAlert, PendingNotification
 from web_checker.notifications.registry import (
     NotifierRegistryError,
     create_default_notifier_registry,
@@ -180,6 +180,33 @@ def test_email_notifier_sends_title_and_link_over_authenticated_starttls():
     assert smtp.message["To"] == "one@example.test, two@example.test"
     assert smtp.message.get_content() == ("Morning Pass\n\nhttps://example.test/book\n")
     assert smtp.closed is True
+
+
+def test_email_notifier_formats_operational_alert_detail():
+    settings = SMTPSettings.from_environment(SMTP_ENVIRONMENT)
+    assert settings is not None
+    smtp_factory = SMTPFactory()
+    notifier = EmailNotifier(
+        settings,
+        smtp_factory=smtp_factory,
+        ssl_context_factory=lambda: object(),
+    )
+    alert = OperationalAlert(
+        id=1,
+        channel="email",
+        key="check-failure:job",
+        job_id="job",
+        title="Repeated check failures: job",
+        detail="Three consecutive checks failed.",
+        created_at=datetime(2026, 8, 10, tzinfo=UTC),
+        attempts=0,
+    )
+
+    asyncio.run(notifier.send(alert))
+
+    message = smtp_factory.instances[0].message
+    assert message["Subject"] == "[Web Checker] Repeated check failures: job"
+    assert "Three consecutive checks failed." in message.get_content()
 
 
 def test_email_notifier_supports_implicit_tls_without_authentication():

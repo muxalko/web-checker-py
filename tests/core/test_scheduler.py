@@ -200,6 +200,48 @@ def test_retry_limit_is_bounded_and_failure_is_contained():
     asyncio.run(scenario())
 
 
+def test_terminal_failure_is_reported_to_operational_alerts():
+    async def scenario():
+        class FailingRunner:
+            async def check(self, selected_job):
+                raise ValueError("provider broken")
+
+        class Alerts:
+            def __init__(self):
+                self.failures = []
+
+            async def check_failed(self, job_id, error, **settings):
+                self.failures.append((job_id, error, settings))
+
+            async def dispatch_pending(self):
+                pass
+
+            async def delivery_backlog(self, **settings):
+                pass
+
+        alerts = Alerts()
+        scheduler = Scheduler(
+            [job(retry=RetryPolicy(max_attempts=1))],
+            FailingRunner(),
+            operational_alerts=alerts,
+            failure_alert_after=2,
+            operational_channels=("email",),
+        )
+
+        await scheduler.tick()
+        await scheduler.wait_for_idle()
+
+        assert alerts.failures == [
+            (
+                "one",
+                "ValueError: provider broken",
+                {"alert_after": 2, "channels": ("email",)},
+            )
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_shutdown_cancels_a_check_after_the_grace_period():
     async def scenario():
         cancelled = asyncio.Event()

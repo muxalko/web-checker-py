@@ -7,6 +7,7 @@ from web_checker.cli import main
 from web_checker.drivers.generic_html.driver import GenericHtmlDriver
 from web_checker.drivers.registry import DriverRegistry
 from web_checker.notifications.email import SMTP_ENVIRONMENT_FIELDS
+from web_checker.storage import SQLiteObservationStore
 
 
 def write_job_config(
@@ -344,3 +345,23 @@ def test_selected_initial_availability_is_delivered_once(tmp_path, fixture_html)
     assert first_output.count("Notification: mock-passes initially_available") == 1
     assert "Notifications: 1 delivered, 0 pending after failure" in first_output
     assert "Notification:" not in second_output
+
+
+def test_status_health_distinguishes_degraded_application(tmp_path):
+    database = tmp_path / "state.db"
+    SQLiteObservationStore(database).record_check_failure(
+        "broken-job", "provider unavailable"
+    )
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["--database", str(database), "status", "--health"],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "Job broken-job:" in stdout.getvalue()
+    assert "consecutive_failures=1" in stdout.getvalue()
+    assert stderr.getvalue() == ""

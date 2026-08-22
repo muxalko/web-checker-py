@@ -19,6 +19,18 @@ class CheckRunner(Protocol):
     async def check(self, job: JobDefinition): ...
 
 
+class OperationalAlerts(Protocol):
+    async def check_failed(
+        self, job_id: str, error: str, *, alert_after: int, channels: tuple[str, ...]
+    ) -> None: ...
+
+    async def dispatch_pending(self) -> None: ...
+
+    async def delivery_backlog(
+        self, *, alert_after: int, channels: tuple[str, ...]
+    ) -> None: ...
+
+
 class Scheduler:
     """Runs interval jobs concurrently while serializing each individual job."""
 
@@ -32,6 +44,9 @@ class Scheduler:
         random_unit: Callable[[], float] = random.random,
         event_sink: EventSink | None = None,
         shutdown_timeout_seconds: float = 30.0,
+        operational_alerts: OperationalAlerts | None = None,
+        failure_alert_after: int = 3,
+        operational_channels: tuple[str, ...] = ("console",),
     ) -> None:
         self._jobs = tuple(
             job for job in jobs if job.enabled and job.schedule is not None
@@ -42,6 +57,9 @@ class Scheduler:
         self._random_unit = random_unit
         self._event_sink = event_sink or (lambda message: None)
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
+        self._operational_alerts = operational_alerts
+        self._failure_alert_after = failure_alert_after
+        self._operational_channels = operational_channels
         startup_time = monotonic()
         self._next_due = {job.id: startup_time for job in self._jobs}
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -129,12 +147,20 @@ class Scheduler:
                 raise
             except Exception as error:
                 if attempt == retry.max_attempts:
+                    formatted_error = f"{type(error).__name__}: {error}"
                     self._emit(
                         job.id,
                         "check_failed",
                         attempt=attempt,
-                        error=f"{type(error).__name__}: {error}",
+                        error=formatted_error,
                     )
+                    if self._operational_alerts is not None:
+                        await self._operational_alerts.check_failed(
+                            job.id,
+                            formatted_error,
+                            alert_after=self._failure_alert_after,
+                            channels=self._operational_channels,
+                        )
                     return
                 delay = retry.delay_after_failure(attempt, self._random_unit())
                 self._emit(
@@ -156,6 +182,11 @@ class Scheduler:
                 notifications_delivered=execution.delivery.delivered,
                 notifications_failed=execution.delivery.failed,
             )
+            if self._operational_alerts is not None:
+                await self._operational_alerts.delivery_backlog(
+                    alert_after=self._failure_alert_after,
+                    channels=self._operational_channels,
+                )
             return
 
     def _seconds_until_next_due(self) -> float:

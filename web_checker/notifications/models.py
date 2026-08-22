@@ -47,3 +47,17 @@ class DeliverySummary:
 
     delivered: int = 0
     failed: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalAlert:
+    """Provider-independent operational failure awaiting delivery."""
+
+    id: int
+    channel: str
+    key: str
+    job_id: str | None
+    title: str
+    detail: str
+    created_at: datetime
+    attempts: int

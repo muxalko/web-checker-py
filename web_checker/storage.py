@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from web_checker.core.models import Availability, CheckResult, Opportunity
@@ -13,9 +13,13 @@ from web_checker.core.transitions import (
     detect_initial_transitions,
     detect_transitions,
 )
-from web_checker.notifications.models import NotificationPlan, PendingNotification
+from web_checker.notifications.models import (
+    NotificationPlan,
+    OperationalAlert,
+    PendingNotification,
+)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,18 @@ class StorageStatus:
     oldest_observation: datetime | None
     check_runs: int
     pending_notifications: int
+
+
+@dataclass(frozen=True)
+class JobStatus:
+    job_id: str
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    consecutive_failures: int
+    last_error: str | None
+    availability: dict[str, int]
+    pending_deliveries: int
+    failed_deliveries: int
 
 
 class StorageError(Exception):
@@ -64,6 +80,22 @@ class SQLiteObservationStore:
                 (job_id, result.checked_at.isoformat()),
             )
             run_id = cursor.lastrowid
+            connection.execute(
+                """
+                INSERT INTO job_status (job_id, last_success_at, consecutive_failures)
+                VALUES (?, ?, 0)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    last_success_at = excluded.last_success_at,
+                    consecutive_failures = 0,
+                    last_error = NULL,
+                    failure_alert_active = 0
+                """,
+                (job_id, result.checked_at.isoformat()),
+            )
+            connection.execute(
+                "DELETE FROM operational_alert_outbox WHERE alert_key = ?",
+                (f"check-failure:{job_id}",),
+            )
             for position, opportunity in enumerate(result.opportunities):
                 connection.execute(
                     """
@@ -217,6 +249,259 @@ class SQLiteObservationStore:
             raise StorageError(f"could not inspect database status: {error}") from error
         finally:
             connection.close()
+
+    def record_check_failure(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        failed_at: datetime | None = None,
+        alert_after: int = 3,
+        channels: tuple[str, ...] = ("console",),
+    ) -> bool:
+        """Record terminal scheduled failure and enqueue one threshold alert."""
+        occurred_at = failed_at or datetime.now(UTC)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO job_status (
+                    job_id, last_failure_at, consecutive_failures, last_error
+                ) VALUES (?, ?, 1, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    last_failure_at = excluded.last_failure_at,
+                    consecutive_failures = consecutive_failures + 1,
+                    last_error = excluded.last_error
+                """,
+                (job_id, occurred_at.isoformat(), error[:2000]),
+            )
+            row = connection.execute(
+                """
+                SELECT consecutive_failures, failure_alert_active
+                FROM job_status WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            raised = (
+                row["consecutive_failures"] >= alert_after
+                and not row["failure_alert_active"]
+            )
+            if raised:
+                self._enqueue_operational_alert(
+                    connection,
+                    key=f"check-failure:{job_id}",
+                    job_id=job_id,
+                    title=f"Repeated check failures: {job_id}",
+                    detail=(
+                        f"{row['consecutive_failures']} consecutive scheduled checks "
+                        f"failed. Last error: {error[:1000]}"
+                    ),
+                    created_at=occurred_at,
+                    channels=channels,
+                )
+                connection.execute(
+                    "UPDATE job_status SET failure_alert_active = 1 WHERE job_id = ?",
+                    (job_id,),
+                )
+            connection.commit()
+            return raised
+        except sqlite3.Error as database_error:
+            connection.rollback()
+            raise StorageError(
+                f"could not record check failure for {job_id!r}: {database_error}"
+            ) from database_error
+        finally:
+            connection.close()
+
+    def list_job_statuses(self) -> tuple[JobStatus, ...]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT s.job_id, s.last_success_at, s.last_failure_at,
+                       s.consecutive_failures, s.last_error,
+                       (SELECT COUNT(*) FROM notification_outbox n
+                        WHERE n.job_id = s.job_id AND n.delivered_at IS NULL) pending,
+                       (SELECT COUNT(*) FROM notification_outbox n
+                        WHERE n.job_id = s.job_id AND n.delivered_at IS NULL
+                          AND n.attempts > 0) failed
+                FROM job_status s ORDER BY s.job_id
+                """
+            ).fetchall()
+            statuses = []
+            for row in rows:
+                availability_rows = connection.execute(
+                    """
+                    SELECT o.availability, COUNT(*) count
+                    FROM opportunity_observations o
+                    WHERE o.run_id = (SELECT MAX(id) FROM check_runs WHERE job_id = ?)
+                    GROUP BY o.availability
+                    """,
+                    (row["job_id"],),
+                ).fetchall()
+                statuses.append(
+                    JobStatus(
+                        job_id=row["job_id"],
+                        last_success_at=datetime.fromisoformat(row["last_success_at"])
+                        if row["last_success_at"]
+                        else None,
+                        last_failure_at=datetime.fromisoformat(row["last_failure_at"])
+                        if row["last_failure_at"]
+                        else None,
+                        consecutive_failures=row["consecutive_failures"],
+                        last_error=row["last_error"],
+                        availability={
+                            item["availability"]: item["count"]
+                            for item in availability_rows
+                        },
+                        pending_deliveries=row["pending"],
+                        failed_deliveries=row["failed"],
+                    )
+                )
+            return tuple(statuses)
+        except (sqlite3.Error, ValueError) as error:
+            raise StorageError(f"could not read job status: {error}") from error
+        finally:
+            connection.close()
+
+    def raise_delivery_backlog_alerts(
+        self, *, alert_after: int, channels: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT s.job_id, s.delivery_alert_active, COUNT(n.id) count,
+                       MAX(n.attempts) max_attempts
+                FROM job_status s
+                LEFT JOIN notification_outbox n
+                  ON n.job_id = s.job_id AND n.delivered_at IS NULL
+                GROUP BY s.job_id
+                """
+            ).fetchall()
+            raised = []
+            for row in rows:
+                active = row["count"] > 0 and row["max_attempts"] >= alert_after
+                if active and not row["delivery_alert_active"]:
+                    self._enqueue_operational_alert(
+                        connection,
+                        key=f"delivery-backlog:{row['job_id']}",
+                        job_id=row["job_id"],
+                        title=f"Notification delivery backlog: {row['job_id']}",
+                        detail=(
+                            f"{row['count']} deliveries remain pending; the oldest "
+                            f"has failed {row['max_attempts']} times. "
+                            "Check worker logs."
+                        ),
+                        created_at=datetime.now(UTC),
+                        channels=channels,
+                    )
+                    raised.append(row["job_id"])
+                if not active and row["delivery_alert_active"]:
+                    connection.execute(
+                        "DELETE FROM operational_alert_outbox WHERE alert_key = ?",
+                        (f"delivery-backlog:{row['job_id']}",),
+                    )
+                connection.execute(
+                    "UPDATE job_status SET delivery_alert_active = ? WHERE job_id = ?",
+                    (int(active), row["job_id"]),
+                )
+            connection.commit()
+            return tuple(raised)
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise StorageError(
+                f"could not evaluate delivery backlog: {error}"
+            ) from error
+        finally:
+            connection.close()
+
+    def list_pending_operational_alerts(
+        self, limit: int = 100
+    ) -> tuple[OperationalAlert, ...]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, channel, alert_key, job_id, title, detail,
+                       created_at, attempts
+                FROM operational_alert_outbox WHERE delivered_at IS NULL
+                ORDER BY id LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return tuple(
+                OperationalAlert(
+                    id=row["id"],
+                    channel=row["channel"],
+                    key=row["alert_key"],
+                    job_id=row["job_id"],
+                    title=row["title"],
+                    detail=row["detail"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                    attempts=row["attempts"],
+                )
+                for row in rows
+            )
+        except (sqlite3.Error, ValueError) as error:
+            raise StorageError(f"could not read operational alerts: {error}") from error
+        finally:
+            connection.close()
+
+    def mark_operational_alert_delivered(
+        self, alert_id: int, delivered_at: datetime
+    ) -> None:
+        self._update_operational_alert(alert_id, delivered_at, None)
+
+    def record_operational_alert_failure(
+        self, alert_id: int, attempted_at: datetime, error: str
+    ) -> None:
+        self._update_operational_alert(alert_id, attempted_at, error)
+
+    def _update_operational_alert(
+        self, alert_id: int, attempted_at: datetime, error: str | None
+    ) -> None:
+        connection = self._connect()
+        try:
+            if error is None:
+                statement = """
+                    UPDATE operational_alert_outbox
+                    SET delivered_at=?, attempts=attempts+1, last_error=NULL
+                    WHERE id=? AND delivered_at IS NULL
+                """
+                parameters = (attempted_at.isoformat(), alert_id)
+            else:
+                statement = """
+                    UPDATE operational_alert_outbox
+                    SET attempts=attempts+1, last_error=?
+                    WHERE id=? AND delivered_at IS NULL
+                """
+                parameters = (error[:2000], alert_id)
+            if connection.execute(statement, parameters).rowcount != 1:
+                raise StorageError(
+                    f"pending operational alert {alert_id} was not found"
+                )
+            connection.commit()
+        except sqlite3.Error as database_error:
+            raise StorageError(
+                f"could not update operational alert: {database_error}"
+            ) from database_error
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _enqueue_operational_alert(
+        connection, *, key, job_id, title, detail, created_at, channels
+    ):
+        for channel in channels:
+            connection.execute(
+                """INSERT INTO operational_alert_outbox
+                (alert_key, channel, job_id, title, detail, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (key, channel, job_id, title, detail, created_at.isoformat()),
+            )
 
     def list_pending_notifications(
         self, limit: int = 100
@@ -373,7 +658,32 @@ class SQLiteObservationStore:
                     CREATE INDEX notification_outbox_pending
                         ON notification_outbox (delivered_at, id);
 
-                    PRAGMA user_version = 2;
+                    CREATE TABLE job_status (
+                        job_id TEXT PRIMARY KEY,
+                        last_success_at TEXT,
+                        last_failure_at TEXT,
+                        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        failure_alert_active INTEGER NOT NULL DEFAULT 0,
+                        delivery_alert_active INTEGER NOT NULL DEFAULT 0
+                    );
+                    CREATE TABLE operational_alert_outbox (
+                        id INTEGER PRIMARY KEY,
+                        alert_key TEXT NOT NULL,
+                        channel TEXT NOT NULL,
+                        job_id TEXT,
+                        title TEXT NOT NULL,
+                        detail TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        delivered_at TEXT,
+                        UNIQUE (alert_key, channel)
+                    );
+                    CREATE INDEX operational_alert_pending
+                        ON operational_alert_outbox (delivered_at, id);
+
+                    PRAGMA user_version = 3;
                     """
                 )
             elif version == 1:
@@ -402,6 +712,52 @@ class SQLiteObservationStore:
                     PRAGMA user_version = 2;
                     """
                 )
+                version = 2
+            if version == 2:
+                connection.executescript(
+                    """
+                    CREATE TABLE job_status (
+                        job_id TEXT PRIMARY KEY,
+                        last_success_at TEXT,
+                        last_failure_at TEXT,
+                        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        failure_alert_active INTEGER NOT NULL DEFAULT 0,
+                        delivery_alert_active INTEGER NOT NULL DEFAULT 0
+                    );
+                    CREATE TABLE operational_alert_outbox (
+                        id INTEGER PRIMARY KEY,
+                        alert_key TEXT NOT NULL,
+                        channel TEXT NOT NULL,
+                        job_id TEXT,
+                        title TEXT NOT NULL,
+                        detail TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        delivered_at TEXT,
+                        UNIQUE (alert_key, channel)
+                    );
+                    CREATE INDEX operational_alert_pending
+                        ON operational_alert_outbox (delivered_at, id);
+                    PRAGMA user_version = 3;
+                    """
+                )
+                has_check_runs = connection.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type='table' AND name='check_runs'
+                    """
+                ).fetchone()
+                if has_check_runs:
+                    connection.execute(
+                        """
+                        INSERT INTO job_status (job_id, last_success_at)
+                        SELECT job_id, MAX(checked_at)
+                        FROM check_runs GROUP BY job_id
+                        """
+                    )
+                    connection.commit()
         except StorageError:
             raise
         except sqlite3.Error as error:

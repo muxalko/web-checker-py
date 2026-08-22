@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import parseaddr
 
-from web_checker.notifications.models import PendingNotification
+from web_checker.notifications.models import OperationalAlert, PendingNotification
 
 SMTP_ENVIRONMENT_PREFIX = "WEB_CHECKER_SMTP_"
 SMTP_ENVIRONMENT_FIELDS = frozenset(
@@ -140,20 +140,30 @@ class EmailNotifier:
         self._smtp_ssl_factory = smtp_ssl_factory
         self._ssl_context_factory = ssl_context_factory
 
-    async def send(self, notification: PendingNotification) -> None:
+    async def send(self, notification: PendingNotification | OperationalAlert) -> None:
         """Deliver one notification without blocking the asynchronous worker."""
 
         message = self._build_message(notification)
         await asyncio.to_thread(self._send_message, message)
 
-    def _build_message(self, notification: PendingNotification) -> EmailMessage:
-        title = " ".join(notification.opportunity_title.split())
+    def _build_message(
+        self, notification: PendingNotification | OperationalAlert
+    ) -> EmailMessage:
+        if isinstance(notification, OperationalAlert):
+            title = " ".join(notification.title.split())
+            content = notification.detail
+        else:
+            title = " ".join(notification.opportunity_title.split())
+            content = title
         message = EmailMessage()
         message["Subject"] = f"[Web Checker] {title}"
         message["From"] = self._settings.sender
         message["To"] = ", ".join(self._settings.recipients)
-        lines = [title]
-        if notification.booking_url is not None:
+        lines = [content]
+        if (
+            isinstance(notification, PendingNotification)
+            and notification.booking_url is not None
+        ):
             lines.extend(("", notification.booking_url))
         message.set_content("\n".join(lines) + "\n")
         return message

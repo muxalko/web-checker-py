@@ -211,6 +211,34 @@ def test_version_one_database_is_migrated(tmp_path):
     assert store.list_pending_notifications() == ()
 
 
+def test_version_two_database_backfills_job_health(tmp_path):
+    path = tmp_path / "version-two.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE check_runs (
+            id INTEGER PRIMARY KEY, job_id TEXT NOT NULL, checked_at TEXT NOT NULL
+        );
+        CREATE TABLE opportunity_observations (
+            run_id INTEGER NOT NULL, availability TEXT NOT NULL
+        );
+        CREATE TABLE notification_outbox (
+            job_id TEXT NOT NULL, delivered_at TEXT, attempts INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO check_runs (job_id, checked_at)
+        VALUES ('existing', '2026-08-10T12:00:00+00:00');
+        PRAGMA user_version = 2;
+        """
+    )
+    connection.close()
+
+    store = SQLiteObservationStore(path)
+
+    status = store.list_job_statuses()[0]
+    assert status.job_id == "existing"
+    assert status.last_success_at == datetime(2026, 8, 10, 12, tzinfo=UTC)
+
+
 def test_prune_preserves_latest_baseline_and_pending_delivery(tmp_path):
     path = tmp_path / "state.db"
     store = SQLiteObservationStore(path)
@@ -260,3 +288,58 @@ def test_prune_removes_expired_completed_notifications(tmp_path):
 
     assert outcome.completed_notifications_deleted == 1
     assert store.status().pending_notifications == 0
+
+
+def test_repeated_failures_are_recorded_and_alerted_once(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+
+    assert store.record_check_failure("job", "first", alert_after=2) is False
+    assert store.record_check_failure("job", "second", alert_after=2) is True
+    assert store.record_check_failure("job", "third", alert_after=2) is False
+
+    status = store.list_job_statuses()[0]
+    assert status.consecutive_failures == 3
+    assert status.last_error == "third"
+    assert len(store.list_pending_operational_alerts()) == 1
+
+
+def test_success_resets_failure_health_without_changing_snapshot_semantics(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    store.record_check_failure("job", "provider unavailable", alert_after=1)
+    snapshot = result(opportunity("pass", Availability.AVAILABLE))
+
+    store.record_success("job", snapshot)
+
+    status = store.list_job_statuses()[0]
+    assert status.consecutive_failures == 0
+    assert status.last_error is None
+    assert status.availability == {"available": 1}
+    assert store.get_latest("job") == snapshot
+    assert store.list_pending_operational_alerts() == ()
+
+
+def test_delivery_backlog_alert_is_deduplicated(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    plan = NotificationPlan(
+        channels=("console",), on=frozenset({TransitionType.BECAME_AVAILABLE})
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.UNAVAILABLE)), plan
+    )
+    store.record_success(
+        "job", result(opportunity("pass", Availability.AVAILABLE), minute=1), plan
+    )
+    pending = store.list_pending_notifications()[0]
+    attempted = datetime(2026, 8, 10, 12, 2, tzinfo=UTC)
+    store.record_notification_failure(pending.id, attempted, "smtp down")
+
+    assert store.raise_delivery_backlog_alerts(
+        alert_after=1, channels=("console",)
+    ) == ("job",)
+    assert (
+        store.raise_delivery_backlog_alerts(alert_after=1, channels=("console",)) == ()
+    )
+    status = store.list_job_statuses()[0]
+    assert status.pending_deliveries == 1
+    assert status.failed_deliveries == 1
+    assert len(store.list_pending_operational_alerts()) == 1

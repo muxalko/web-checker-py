@@ -220,6 +220,20 @@ count, oldest retained observation, pending deliveries, and last successful
 backup metadata. Restore validation performs an SQLite integrity check using
 only local files.
 
+Operational health is stored separately from opportunity snapshots. Each job
+records its last successful and terminally failed scheduled check, consecutive
+failure count, and sanitized last error. Current availability is always derived
+from the last complete successful snapshot; provider failure therefore cannot
+be represented as unavailable inventory. Delivery health is derived from the
+durable notification outbox.
+
+Repeated check failures and repeatedly failed notification deliveries create
+deduplicated operational-alert outbox items after a configurable threshold.
+Successful checks and cleared backlogs reset their respective alert episodes.
+Operational alerts use the notifier registry but remain separate from
+availability transitions. Alert creation, delivery, and delivery failure are
+also structured worker events, providing a fallback when SMTP itself is failing.
+
 ### Transition detection
 
 The transition detector compares a driver's current normalized results with the
@@ -282,6 +296,12 @@ at-least-once rather than exactly-once across a process crash: if an external
 adapter succeeds but the process stops before SQLite records success, that item
 will be retried. Adapters added in the future should use provider idempotency keys
 where available.
+
+The `status --health` command reports application health rather than process
+liveness: per-job success/failure timestamps, consecutive failures, current
+availability counts, and pending or previously failed deliveries. It exits
+nonzero when degraded. Container health remains a process-liveness check so a
+provider outage does not cause restart churn or discard diagnostic context.
 
 ### Controlled mock providers
 
@@ -559,6 +579,7 @@ Logs should be structured and include, where applicable:
 - Outcome and opportunity count.
 - Transition count.
 - Notification outcome.
+- Operational-alert creation and delivery outcome.
 
 Logs must not contain credentials, payment data, session cookies, or full
 provider responses by default.

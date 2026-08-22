@@ -9,7 +9,7 @@ Docker daemon:
 | Environment | Compose project | Source | Services | State |
 | --- | --- | --- | --- | --- |
 | Development testing | `web-checker-development` | Current working tree, including uncommitted changes | Checker and controlled mock site | Development-only Compose volume |
-| Production | `web-checker-production` | Exact `development` merge SHA validated by CI | Checker only | Production-only Compose volume |
+| Production | `web-checker-production` | Exact `development` merge SHA validated by CI | Checker and maintenance | Production-only state and backup volumes |
 
 The project name prefixes container, network, and Compose-managed volume names.
 Never override these names with `docker compose --project-name` or
@@ -79,6 +79,11 @@ Production SMTP commonly also requires `WEB_CHECKER_SMTP_USERNAME` and
 `WEB_CHECKER_SMTP_SECURITY` accepts `starttls` (the default), `implicit-tls`, or
 `none`, with optional `WEB_CHECKER_SMTP_PORT` and
 `WEB_CHECKER_SMTP_TIMEOUT_SECONDS`. Use `none` only for trusted local capture.
+When SMTP is configured, operational alerts default to both console and email;
+otherwise they default to console. Override this with
+`WEB_CHECKER_OPERATIONAL_CHANNELS`, for example `console,email`.
+`WEB_CHECKER_FAILURE_ALERT_AFTER` controls both consecutive-check and repeated
+delivery-failure thresholds and defaults to `3`.
 Keep the environment file mode `0600`. Validate it without printing resolved
 values:
 
@@ -141,10 +146,18 @@ docker compose --file compose.production.yaml logs --tail=20 maintenance
 docker compose --file compose.production.yaml run --rm maintenance \
   web-checker --database /data/web-checker.db status \
   --backup-directory /backups
+docker compose --file compose.production.yaml run --rm maintenance \
+  web-checker --database /data/web-checker.db status --health \
+  --backup-directory /backups
 ```
 
 Do not run `docker compose config` without `--quiet` on the production host;
 resolved environment values can otherwise be printed.
+
+The checker healthcheck reports process liveness only. Use `status --health`
+for application/provider health; exit status `2` indicates consecutive check
+failures or previously failed pending deliveries. When SMTP is unavailable,
+inspect `event=operational_alert_*` in checker logs as the fallback alert path.
 
 ## Backup restore drill
 
