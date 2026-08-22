@@ -324,7 +324,8 @@ def test_matching_transition_is_delivered_once(tmp_path, fixture_html):
     _, second_output, _ = invoke(command, DriverRegistry([driver]))
     _, third_output, _ = invoke(command, DriverRegistry([driver]))
 
-    assert second_output.count("Notification: mock-passes became_available") == 1
+    assert second_output.count("Notification: mock-passes — 1 change(s)") == 1
+    assert "availability=available" in second_output
     assert "Notifications: 1 delivered, 0 pending after failure" in second_output
     assert "Notification:" not in third_output
 
@@ -342,7 +343,8 @@ def test_selected_initial_availability_is_delivered_once(tmp_path, fixture_html)
     _, first_output, _ = invoke(command, mock_registry(fixture_html))
     _, second_output, _ = invoke(command, mock_registry(fixture_html))
 
-    assert first_output.count("Notification: mock-passes initially_available") == 1
+    assert first_output.count("Notification: mock-passes — 1 change(s)") == 1
+    assert "- initially_available: Morning Adventure Pass" in first_output
     assert "Notifications: 1 delivered, 0 pending after failure" in first_output
     assert "Notification:" not in second_output
 

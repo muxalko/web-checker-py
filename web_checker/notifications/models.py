@@ -6,6 +6,8 @@ from datetime import datetime
 from web_checker.core.models import Availability
 from web_checker.core.transitions import TransitionType
 
+MAX_DIGEST_ITEMS = 25
+
 
 @dataclass(frozen=True, slots=True)
 class NotificationPlan:
@@ -26,19 +28,41 @@ class NotificationPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class PendingNotification:
-    """One durable outbox item ready for a delivery adapter."""
+class NotificationItem:
+    """One provider-independent opportunity change within a digest."""
 
-    id: int
-    channel: str
-    job_id: str
     transition_type: TransitionType
     opportunity_id: str
     opportunity_title: str
     current_availability: Availability | None
+    starts_at: datetime | None
     booking_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PendingNotification:
+    """One durable, bounded digest ready for a delivery adapter."""
+
+    id: int
+    channel: str
+    job_id: str
     checked_at: datetime
+    items: tuple[NotificationItem, ...]
+    part_number: int
+    part_count: int
     attempts: int
+
+    def __post_init__(self) -> None:
+        if not self.items:
+            raise ValueError("notification digest must contain at least one item")
+        if len(self.items) > MAX_DIGEST_ITEMS:
+            raise ValueError(
+                f"notification digest cannot exceed {MAX_DIGEST_ITEMS} items"
+            )
+        if self.part_count < 1:
+            raise ValueError("notification digest part count must be positive")
+        if not 1 <= self.part_number <= self.part_count:
+            raise ValueError("notification digest part number is out of range")
 
 
 @dataclass(frozen=True, slots=True)

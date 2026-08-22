@@ -5,7 +5,7 @@ import pytest
 
 from web_checker.core.models import Availability, CheckResult, Opportunity
 from web_checker.core.transitions import TransitionType
-from web_checker.notifications.models import NotificationPlan
+from web_checker.notifications.models import MAX_DIGEST_ITEMS, NotificationPlan
 from web_checker.storage import SQLiteObservationStore, StorageError
 
 
@@ -53,9 +53,11 @@ def test_first_available_success_can_create_deduplicated_notifications(tmp_path)
     assert [item.type for item in outcome.transitions] == [
         TransitionType.INITIALLY_AVAILABLE
     ]
-    assert [item.transition_type for item in reopened.list_pending_notifications()] == [
-        TransitionType.INITIALLY_AVAILABLE
-    ]
+    assert [
+        item.transition_type
+        for notification in reopened.list_pending_notifications()
+        for item in notification.items
+    ] == [TransitionType.INITIALLY_AVAILABLE]
 
 
 def test_initial_available_transition_is_quiet_when_not_selected(tmp_path):
@@ -166,9 +168,95 @@ def test_matching_transitions_create_deduplicated_outbox_items(tmp_path):
     assert [item.type for item in outcome.transitions] == [
         TransitionType.BECAME_AVAILABLE
     ]
-    assert [(item.channel, item.transition_type) for item in pending] == [
+    assert [(item.channel, item.items[0].transition_type) for item in pending] == [
         ("console", TransitionType.BECAME_AVAILABLE),
         ("fake", TransitionType.BECAME_AVAILABLE),
+    ]
+
+
+def test_one_check_creates_ordered_provider_independent_digest_per_channel(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    plan = NotificationPlan(
+        channels=("console",),
+        on=frozenset({TransitionType.BECAME_AVAILABLE}),
+    )
+    store.record_success(
+        "job",
+        result(
+            opportunity("later", Availability.UNAVAILABLE),
+            opportunity("earlier", Availability.UNAVAILABLE),
+        ),
+        plan,
+    )
+
+    store.record_success(
+        "job",
+        result(
+            opportunity(
+                "later",
+                Availability.AVAILABLE,
+                title="Later pass",
+                starts_at=datetime(2026, 8, 23, 9, 0, tzinfo=UTC),
+                booking_url="https://example.test/later",
+            ),
+            opportunity(
+                "earlier",
+                Availability.AVAILABLE,
+                title="Earlier pass",
+                starts_at=datetime(2026, 8, 22, 9, 0, tzinfo=UTC),
+                booking_url="https://example.test/earlier",
+            ),
+            minute=1,
+        ),
+        plan,
+    )
+
+    pending = store.list_pending_notifications()
+
+    assert len(pending) == 1
+    assert [item.opportunity_id for item in pending[0].items] == ["earlier", "later"]
+    assert pending[0].items[0].current_availability is Availability.AVAILABLE
+    assert pending[0].items[0].starts_at == datetime(2026, 8, 22, 9, 0, tzinfo=UTC)
+    assert pending[0].items[0].booking_url == "https://example.test/earlier"
+    status = store.list_job_statuses()[0]
+    assert status.pending_deliveries == 1
+    assert status.failed_deliveries == 0
+
+
+def test_large_check_splits_into_deterministic_bounded_digest_parts(tmp_path):
+    store = SQLiteObservationStore(tmp_path / "state.db")
+    plan = NotificationPlan(
+        channels=("console",),
+        on=frozenset({TransitionType.BECAME_AVAILABLE}),
+    )
+    identifiers = [f"pass-{position:02d}" for position in range(MAX_DIGEST_ITEMS + 1)]
+    store.record_success(
+        "job",
+        result(*(opportunity(item, Availability.UNAVAILABLE) for item in identifiers)),
+        plan,
+    )
+    store.record_success(
+        "job",
+        result(
+            *(
+                opportunity(item, Availability.AVAILABLE)
+                for item in reversed(identifiers)
+            ),
+            minute=1,
+        ),
+        plan,
+    )
+
+    pending = store.list_pending_notifications()
+
+    assert [len(notification.items) for notification in pending] == [
+        MAX_DIGEST_ITEMS,
+        1,
+    ]
+    assert [(item.part_number, item.part_count) for item in pending] == [(1, 2), (2, 2)]
+    assert [item.opportunity_id for item in pending[0].items[:2]] == [
+        "pass-00",
+        "pass-01",
     ]
 
 
@@ -237,6 +325,84 @@ def test_version_two_database_backfills_job_health(tmp_path):
     status = store.list_job_statuses()[0]
     assert status.job_id == "existing"
     assert status.last_success_at == datetime(2026, 8, 10, 12, tzinfo=UTC)
+
+
+def test_version_three_delivery_state_migrates_without_replaying_success(tmp_path):
+    path = tmp_path / "version-three.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE check_runs (
+            id INTEGER PRIMARY KEY, job_id TEXT NOT NULL, checked_at TEXT NOT NULL
+        );
+        CREATE TABLE opportunity_observations (
+            run_id INTEGER NOT NULL, position INTEGER NOT NULL,
+            opportunity_id TEXT NOT NULL, title TEXT NOT NULL,
+            availability TEXT NOT NULL, starts_at TEXT, booking_url TEXT,
+            attributes_json TEXT NOT NULL
+        );
+        CREATE TABLE transitions (
+            id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL,
+            opportunity_id TEXT NOT NULL, transition_type TEXT NOT NULL,
+            previous_availability TEXT, current_availability TEXT
+        );
+        CREATE TABLE notification_outbox (
+            id INTEGER PRIMARY KEY, transition_id INTEGER NOT NULL,
+            channel TEXT NOT NULL, job_id TEXT NOT NULL,
+            transition_type TEXT NOT NULL, opportunity_id TEXT NOT NULL,
+            opportunity_title TEXT NOT NULL, current_availability TEXT,
+            booking_url TEXT, checked_at TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT,
+            last_error TEXT, delivered_at TEXT,
+            UNIQUE (transition_id, channel)
+        );
+        CREATE INDEX notification_outbox_pending
+            ON notification_outbox (delivered_at, id);
+        CREATE TABLE job_status (
+            job_id TEXT PRIMARY KEY, last_success_at TEXT, last_failure_at TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+            failure_alert_active INTEGER NOT NULL DEFAULT 0,
+            delivery_alert_active INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE operational_alert_outbox (
+            id INTEGER PRIMARY KEY, alert_key TEXT NOT NULL, channel TEXT NOT NULL,
+            job_id TEXT, title TEXT NOT NULL, detail TEXT NOT NULL,
+            created_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT, delivered_at TEXT,
+            UNIQUE (alert_key, channel)
+        );
+        INSERT INTO check_runs VALUES (1, 'job', '2026-08-10T12:00:00+00:00');
+        INSERT INTO opportunity_observations VALUES
+            (1, 0, 'first', 'First', 'available',
+             '2026-08-22T09:00:00+00:00', 'https://example.test/first', '{}'),
+            (1, 1, 'second', 'Second', 'available',
+             '2026-08-23T09:00:00+00:00', 'https://example.test/second', '{}');
+        INSERT INTO transitions VALUES
+            (1, 1, 'first', 'became_available', 'unavailable', 'available'),
+            (2, 1, 'second', 'became_available', 'unavailable', 'available');
+        INSERT INTO notification_outbox VALUES
+            (1, 1, 'email', 'job', 'became_available', 'first', 'First',
+             'available', 'https://example.test/first',
+             '2026-08-10T12:00:00+00:00', 1,
+             '2026-08-10T12:01:00+00:00', NULL,
+             '2026-08-10T12:01:00+00:00'),
+            (2, 2, 'email', 'job', 'became_available', 'second', 'Second',
+             'available', 'https://example.test/second',
+             '2026-08-10T12:00:00+00:00', 2,
+             '2026-08-10T12:02:00+00:00', 'smtp down', NULL);
+        PRAGMA user_version = 3;
+        """
+    )
+    connection.close()
+
+    pending = SQLiteObservationStore(path).list_pending_notifications()
+
+    assert len(pending) == 1
+    assert pending[0].part_number == 2
+    assert pending[0].part_count == 2
+    assert pending[0].attempts == 2
+    assert pending[0].items[0].opportunity_id == "second"
+    assert pending[0].items[0].starts_at == datetime(2026, 8, 23, 9, 0, tzinfo=UTC)
 
 
 def test_prune_preserves_latest_baseline_and_pending_delivery(tmp_path):
